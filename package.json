@@ -1,6 +1,6 @@
 {
   "name": "ScrapSys",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Sistema de Gestão Industrial para Ferro-Velho",
   "main": "./out/main/index.js",
   "author": "Alisson Rodrigues",
