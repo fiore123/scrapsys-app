@@ -45,6 +45,13 @@
     "appId": "com.scrapsys.industrial",
     "productName": "ScrapSys",
     "asar": true,
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "fiore123",
+        "repo": "scrapsys-app"
+      }
+    ],
     "win": {
       "target": ["nsis"],
       "icon": "resources/icon.png"
