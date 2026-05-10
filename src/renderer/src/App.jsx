@@ -1196,6 +1196,112 @@ export default function App() {
           </div>
         )}
 
+        {activeTab === 'users' && currentUser.role === 'admin' && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-6xl w-full">
+            <div className="bg-[#121212]/80 backdrop-blur-xl border border-white/5 rounded-[2rem] p-6 shadow-xl h-fit relative overflow-hidden">
+              <div className="absolute -top-32 -left-32 w-64 h-64 bg-indigo-900 rounded-full mix-blend-multiply filter blur-[100px] opacity-10"></div>
+              
+              <h2 className="text-sm font-bold mb-6 flex items-center gap-2 text-gray-300 uppercase tracking-widest border-b border-white/5 pb-4">
+                <UserPlus size={16} className="text-indigo-400" /> Criar Licença
+              </h2>
+              
+              <form onSubmit={handleGenerateUser} className="flex flex-col gap-5 relative z-10">
+                <div>
+                  <label className="text-xs font-semibold text-gray-500 mb-2 block uppercase tracking-wider">CPF ou CNPJ</label>
+                  <input type="text" value={newUserCpf} onChange={(e) => setNewUserCpf(e.target.value)} placeholder="000.000.000-00" className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-gray-200 placeholder-gray-700 focus:ring-1 focus:ring-indigo-500/50 outline-none transition-all text-sm" required/>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-gray-500 mb-2 block uppercase tracking-wider">Nome / Razão Social</label>
+                  <input type="text" value={newUserName} onChange={(e) => setNewUserName(e.target.value)} placeholder="João da Silva" className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-gray-200 placeholder-gray-700 focus:ring-1 focus:ring-indigo-500/50 outline-none transition-all text-sm" required/>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-gray-500 mb-2 block uppercase tracking-wider">E-mail</label>
+                  <input type="email" value={newUserEmail} onChange={(e) => setNewUserEmail(e.target.value)} placeholder="joao@email.com" className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-gray-200 placeholder-gray-700 focus:ring-1 focus:ring-indigo-500/50 outline-none transition-all text-sm" required/>
+                </div>
+                <button type="submit" className="w-full mt-2 py-3.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold text-sm shadow-lg transition-all flex justify-center items-center gap-2 border border-indigo-500/50">Gerar Acesso (+30 Dias)</button>
+              </form>
+            </div>
+
+            <div className="lg:col-span-2 flex flex-col gap-6">
+              
+              {generatedCredentials && (
+                <div className="bg-indigo-500/10 border border-indigo-500/30 rounded-[2rem] p-6 shadow-xl animate-in zoom-in-95 relative">
+                  <button onClick={() => setGeneratedCredentials(null)} className="absolute top-4 right-4 text-indigo-400/50 hover:text-indigo-400 transition-colors p-1"><X size={18} /></button>
+                  <h3 className="text-sm font-bold text-indigo-300 mb-4 uppercase tracking-widest flex items-center gap-2"><Key size={16} /> Credenciais Geradas</h3>
+                  <div className="grid grid-cols-2 gap-4 mb-5">
+                    <div className="bg-black/40 p-4 rounded-xl border border-white/5">
+                      <p className="text-[10px] text-gray-500 uppercase tracking-widest mb-1">Login (CPF/CNPJ)</p>
+                      <p className="text-lg font-mono font-bold text-gray-200">{generatedCredentials.login}</p>
+                    </div>
+                    <div className="bg-black/40 p-4 rounded-xl border border-white/5">
+                      <p className="text-[10px] text-gray-500 uppercase tracking-widest mb-1">Senha Gerada</p>
+                      <p className="text-lg font-mono font-bold text-emerald-400">{generatedCredentials.password}</p>
+                    </div>
+                  </div>
+                  <div className="flex gap-4">
+                    <button onClick={() => copyToClipboard(`Acesso ScrapSys\nLogin: ${generatedCredentials.login}\nSenha: ${generatedCredentials.password}\n\nPainel isolado exclusivo.`)} className="flex-1 py-3 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl font-bold text-sm transition-all flex justify-center items-center gap-2 border border-white/10"><Copy size={16} /> Copiar para Área de Transferência</button>
+                    <a href={`mailto:${generatedCredentials.email}?subject=Seu Acesso ScrapSys&body=Olá ${generatedCredentials.name},%0D%0A%0D%0ASeu acesso ao painel do ferro-velho foi gerado.%0D%0ALogin: ${generatedCredentials.login}%0D%0ASenha: ${generatedCredentials.password}%0D%0A%0D%0AAcesso exclusivo ao seu painel.`} className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold text-sm transition-all flex justify-center items-center gap-2 border border-indigo-500/50"><Mail size={16} /> Enviar por E-mail</a>
+                  </div>
+                </div>
+              )}
+
+              <div className="bg-[#121212]/80 backdrop-blur-xl border border-white/5 rounded-[2rem] p-6 flex flex-col flex-1 shadow-xl relative overflow-hidden">
+                <div className="flex justify-between items-center mb-6 border-b border-white/5 pb-4">
+                  <h2 className="text-sm font-bold flex items-center gap-2 text-gray-300 uppercase tracking-widest"><Users className="text-indigo-400" size={16} /> Clientes / Licenças</h2>
+                  <div className="flex items-center gap-4">
+                    <div className="relative w-full sm:w-64">
+                      <Search size={14} className="absolute left-3 top-2.5 text-gray-500" />
+                      <input type="text" value={userSearchTerm} onChange={(e) => setUserSearchTerm(e.target.value)} placeholder="Procurar usuário..." className="w-full bg-black/50 border border-white/10 rounded-lg pl-9 pr-4 py-2 text-white outline-none focus:border-indigo-500/50 text-xs transition-all" />
+                    </div>
+                    <div className="text-[10px] font-bold uppercase tracking-widest text-gray-500 bg-white/5 px-3 py-1.5 rounded-lg border border-white/5 shrink-0">{filteredUsers.length} ativas</div>
+                  </div>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar max-h-[400px]">
+                  {filteredUsers.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center text-gray-600">
+                      <Shield size={40} className="opacity-30 mb-3" />
+                      <p className="text-sm">Nenhuma licença encontrada.</p>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-3">
+                      {filteredUsers.map((u) => (
+                        <div key={u.id} className={`bg-black/40 border border-white/5 rounded-2xl p-4 flex flex-col xl:flex-row items-start xl:items-center justify-between transition-all ${!u.isActive ? 'opacity-50' : ''}`}>
+                          <div className="flex items-center gap-4 mb-4 xl:mb-0">
+                            <div className={`flex items-center justify-center p-3 rounded-xl border ${u.isActive ? 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400' : 'bg-black/50 border-white/5 text-gray-600'}`}>
+                              <Users size={20} />
+                            </div>
+                            <div>
+                              <p className="font-bold text-gray-200 text-sm flex items-center gap-2">
+                                {u.name}
+                                {new Date() > new Date(u.validUntil) && <span className="bg-red-500/20 text-red-400 text-[9px] px-2 py-0.5 rounded border border-red-500/20 uppercase tracking-widest">Expirado</span>}
+                              </p>
+                              <p className="text-[10px] text-gray-500 mt-1 flex items-center gap-2">
+                                Login: <span className="font-mono bg-white/5 px-1 rounded">{u.login}</span> 
+                                <span className="opacity-50">•</span> 
+                                Válido até: <span className={`${new Date() > new Date(u.validUntil) ? 'text-red-400' : 'text-emerald-400 font-bold'}`}>{formatDateOnly(u.validUntil)}</span>
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 w-full xl:w-auto">
+                            <button onClick={() => handleToggleUser(u.id)} className={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer items-center rounded-full transition-colors border ${u.isActive ? 'bg-emerald-500/50 border-emerald-500/50' : 'bg-black/50 border-white/10'}`} title={u.isActive ? 'Bloquear Acesso' : 'Liberar Acesso'}><span className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${u.isActive ? 'translate-x-6' : 'translate-x-1'}`} /></button>
+                            <button onClick={() => { setExtendDaysValue(30); setExtendModalUserId(u.id); }} className="px-3 py-2 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-lg text-xs font-bold hover:bg-indigo-500/20 transition-all flex items-center gap-1" title="Estender Token Local"><CalendarClock size={14}/> Renovar</button>
+                            <button onClick={() => handleResetUserPassword(u)} className="px-3 py-2 bg-black/50 text-gray-400 border border-white/10 rounded-lg text-xs font-bold hover:bg-zinc-800 hover:text-white transition-all"><Key size={14}/></button>
+                            {u.id !== 'admin_root' && (
+                              <button onClick={() => handleDeleteUser(u.id)} className="p-2 text-red-500/50 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all border border-transparent hover:border-red-500/20"><Trash2 size={16} /></button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+            </div>
+          </div>
+        )}
+
       </main>
 
       {extendModalUserId && (
