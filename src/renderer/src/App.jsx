@@ -170,46 +170,39 @@ export default function App() {
   useEffect(() => { if (currentUser && currentUser.role !== 'admin') saveData(`${currentUser.id}_printers`, printers); }, [printers, currentUser]);
 
   useEffect(() => {
-  if (window.api && window.api.onUpdateAvailable) {
-    window.api.onUpdateAvailable(() => {
-      setUpdateAvailable(true);
-      setIsCheckingUpdate(false);
-      showToast("Nova versão disponível para instalação.");
-    });
-  }
-}, []);
+    if (window.electronAPI && window.electronAPI.onUpdateAvailable) {
+      window.electronAPI.onUpdateAvailable(() => setUpdateAvailable(true));
+    }
+  }, []);
 
-const handleApplyUpdate = () => {
-  setIsUpdating(true);
+  const handleApplyUpdate = () => {
+    setIsUpdating(true);
+    if (window.electronAPI && window.electronAPI.applyUpdate) {
+      window.electronAPI.applyUpdate();
+    } else {
+      setTimeout(() => {
+        setIsUpdating(false);
+        setUpdateAvailable(false);
+        showToast("Simulação: Atualização aplicada e sistema reiniciado.");
+      }, 3000);
+    }
+  };
 
-  if (window.api && window.api.applyUpdate) {
-    window.api.applyUpdate();
-  } else {
-    setTimeout(() => {
-      setIsUpdating(false);
-      setUpdateAvailable(false);
-      showToast("Atualização aplicada e sistema reiniciado.");
-    }, 3000);
-  }
-};
-
-const handleCheckForUpdates = () => {
-  setIsCheckingUpdate(true);
-
-  if (window.api && window.api.checkForUpdates) {
-    window.api.checkForUpdates();
-
-    setTimeout(() => {
-      setIsCheckingUpdate(false);
-      showToast("Verificação enviada ao servidor.");
-    }, 2000);
-  } else {
-    setTimeout(() => {
-      setIsCheckingUpdate(false);
-      showToast("O sistema já está na versão mais recente.");
-    }, 2000);
-  }
-};
+  const handleCheckForUpdates = () => {
+    setIsCheckingUpdate(true);
+    if (window.electronAPI && window.electronAPI.checkForUpdates) {
+      window.electronAPI.checkForUpdates();
+      setTimeout(() => {
+        setIsCheckingUpdate(false);
+        showToast("Verificação enviada ao servidor.");
+      }, 2000);
+    } else {
+      setTimeout(() => {
+        setIsCheckingUpdate(false);
+        showToast("Simulação: O sistema já está na versão mais recente.");
+      }, 2000);
+    }
+  };
 
   const handleAuth = (e) => {
     e.preventDefault();
@@ -672,7 +665,7 @@ const handleCheckForUpdates = () => {
               <Scale className="text-emerald-400" size={40} />
             </div>
             <h1 className="text-3xl font-black tracking-tight text-white/90">ScrapSys</h1>
-            <p className="text-sm text-gray-500 tracking-widest uppercase mt-1">Offline Systems</p>
+            <p className="text-sm text-gray-500 tracking-widest uppercase mt-1">Industrial Offline System</p>
           </div>
 
           <form onSubmit={handleAuth} className="flex flex-col gap-4">
