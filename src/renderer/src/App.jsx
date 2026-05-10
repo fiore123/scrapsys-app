@@ -200,6 +200,7 @@ export default function App() {
     setIsCheckingUpdate(true);
     if (window.electronAPI && window.electronAPI.checkForUpdates) {
       window.electronAPI.checkForUpdates();
+      // Mostra mensagem temporária para o utilizador saber que clicou
       setTimeout(() => {
         setIsCheckingUpdate(false);
         showToast("Verificação enviada ao servidor...");
@@ -1424,11 +1425,13 @@ export default function App() {
       )}
 
       <style dangerouslySetInnerHTML={{__html: `
+        /* Ocultar barra de rolagem no Chrome/Safari/Edge */
         ::-webkit-scrollbar {
-          display: none;
           width: 0px;
           background: transparent;
+          display: none;
         }
+        /* Ocultar barra de rolagem no Firefox e IE */
         * {
           scrollbar-width: none;
           -ms-overflow-style: none;
