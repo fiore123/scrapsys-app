@@ -1,34 +1,37 @@
 import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+import { autoUpdater } from 'electron-updater'
 import icon from '../../resources/icon.png?asset'
 
 function createWindow() {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
-  width: 900,
-  height: 670,
-  show: false,
-  autoHideMenuBar: true, 
-  fullscreen: true,     
-  // frame: false,      
-  webPreferences: {
-    devTools: false,     
-    nodeIntegration: false,
-    contextIsolation: true,
-    preload: join(__dirname, '../preload/index.js')
-  }
-})
-
+    width: 900,
+    height: 670,
+    show: false,
+    autoHideMenuBar: true,
+    fullscreen: true,
+    // frame: false,
+    icon,
+    webPreferences: {
+      devTools: false,
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: join(__dirname, '../preload/index.js')
+    }
+  })
 
   mainWindow.webContents.on('before-input-event', (event, input) => {
-  if (input.control && input.shift && input.key.toLowerCase() === 'i') {
-    event.preventDefault();
-  }
-  if (input.control && input.key.toLowerCase() === 'r') {
-    event.preventDefault();
-  }
-});
+    if (input.control && input.shift && input.key.toLowerCase() === 'i') {
+      event.preventDefault()
+    }
+
+    if (input.control && input.key.toLowerCase() === 'r') {
+      event.preventDefault()
+    }
+  })
+
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
   })
@@ -36,6 +39,11 @@ function createWindow() {
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
     return { action: 'deny' }
+  })
+
+  // Quando uma atualização for encontrada, avisa o React
+  autoUpdater.on('update-available', () => {
+    mainWindow.webContents.send('update_available')
   })
 
   // HMR for renderer base on electron-vite cli.
@@ -63,6 +71,16 @@ app.whenReady().then(() => {
 
   // IPC test
   ipcMain.on('ping', () => console.log('pong'))
+
+  // Quando o usuário clicar em "Atualizar" no pop-up do React
+  ipcMain.on('apply_update', () => {
+    autoUpdater.quitAndInstall()
+  })
+
+  // Quando o React pedir para verificar atualizações
+  ipcMain.on('check_for_updates', () => {
+    autoUpdater.checkForUpdatesAndNotify()
+  })
 
   createWindow()
 
