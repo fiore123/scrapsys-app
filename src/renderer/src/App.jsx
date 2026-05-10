@@ -200,7 +200,6 @@ export default function App() {
     setIsCheckingUpdate(true);
     if (window.electronAPI && window.electronAPI.checkForUpdates) {
       window.electronAPI.checkForUpdates();
-      // Mostra mensagem temporária para o utilizador saber que clicou
       setTimeout(() => {
         setIsCheckingUpdate(false);
         showToast("Verificação enviada ao servidor...");
@@ -1425,14 +1424,15 @@ export default function App() {
       )}
 
       <style dangerouslySetInnerHTML={{__html: `
-        ::-webkit-scrollbar { width: 6px; height: 6px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 10px; }
-        ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); }
-        
-        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: rgba(255, 255, 255, 0.02); border-radius: 10px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 10px; }
+        ::-webkit-scrollbar {
+          display: none;
+          width: 0px;
+          background: transparent;
+        }
+        * {
+          scrollbar-width: none;
+          -ms-overflow-style: none;
+        }
       `}} />
     </div>
   );
