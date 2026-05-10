@@ -138,6 +138,10 @@ export default function App() {
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
 
+  const [currentPasswordInput, setCurrentPasswordInput] = useState('');
+  const [newPasswordInput, setNewPasswordInput] = useState('');
+  const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
+
   useEffect(() => {
     saveData('global_usersList', usersList);
   }, [usersList]);
@@ -209,6 +213,33 @@ export default function App() {
   const handleLogout = () => {
     setCurrentUser(null);
     setActiveTab('home');
+  };
+
+  const handleChangePassword = (e) => {
+    e.preventDefault();
+    if (currentPasswordInput !== currentUser.password) {
+      showToast("Senha atual incorreta.");
+      return;
+    }
+    if (newPasswordInput !== confirmPasswordInput) {
+      showToast("As novas senhas não coincidem.");
+      return;
+    }
+    if (newPasswordInput.length < 6) {
+      showToast("A nova senha deve ter no mínimo 6 caracteres.");
+      return;
+    }
+
+    const updatedUsers = usersList.map(u => 
+      u.id === currentUser.id ? { ...u, password: newPasswordInput } : u
+    );
+    setUsersList(updatedUsers);
+    setCurrentUser({ ...currentUser, password: newPasswordInput });
+    
+    setCurrentPasswordInput('');
+    setNewPasswordInput('');
+    setConfirmPasswordInput('');
+    showToast("Senha alterada com sucesso!");
   };
 
   const handleSearchHardware = async () => {
@@ -991,6 +1022,29 @@ export default function App() {
         {activeTab === 'settings' && (
           <div className="flex flex-col max-w-5xl mx-auto w-full gap-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
             
+            <div className="bg-[#121212]/80 backdrop-blur-xl border border-white/5 rounded-[2rem] p-6 shadow-xl relative overflow-hidden">
+              <div className="absolute -top-32 -right-32 w-64 h-64 bg-rose-900 rounded-full mix-blend-multiply filter blur-[100px] opacity-10"></div>
+              <h2 className="text-sm font-bold mb-6 flex items-center gap-2 text-gray-300 uppercase tracking-widest border-b border-white/5 pb-4"><Key size={16} className="text-gray-500" /> Alterar Senha de Acesso</h2>
+              
+              <form onSubmit={handleChangePassword} className="relative z-10 grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div>
+                  <label className="text-[10px] font-bold text-gray-600 mb-2 block uppercase tracking-widest">Senha Atual</label>
+                  <input type="password" value={currentPasswordInput} onChange={e => setCurrentPasswordInput(e.target.value)} className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2.5 text-gray-200 focus:ring-1 focus:ring-rose-500/50 outline-none transition-all text-sm" required />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-gray-600 mb-2 block uppercase tracking-widest">Nova Senha</label>
+                  <input type="password" value={newPasswordInput} onChange={e => setNewPasswordInput(e.target.value)} className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2.5 text-gray-200 focus:ring-1 focus:ring-rose-500/50 outline-none transition-all text-sm" required minLength={6} />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-gray-600 mb-2 block uppercase tracking-widest">Confirmar Nova Senha</label>
+                  <div className="flex gap-3">
+                     <input type="password" value={confirmPasswordInput} onChange={e => setConfirmPasswordInput(e.target.value)} className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2.5 text-gray-200 focus:ring-1 focus:ring-rose-500/50 outline-none transition-all text-sm" required minLength={6} />
+                     <button type="submit" disabled={!currentPasswordInput || !newPasswordInput || !confirmPasswordInput} className="px-6 py-2.5 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-gray-200 rounded-xl font-bold text-sm transition-all flex items-center gap-2 border border-white/10"><CheckCircle size={16}/> Salvar</button>
+                  </div>
+                </div>
+              </form>
+            </div>
+
             <div className="bg-[#121212]/80 backdrop-blur-xl border border-white/5 rounded-[2rem] p-6 shadow-xl relative overflow-hidden">
               <div className="absolute -top-32 -right-32 w-64 h-64 bg-emerald-900 rounded-full mix-blend-multiply filter blur-[100px] opacity-10"></div>
               <h2 className="text-sm font-bold mb-8 flex items-center gap-2 text-gray-300 uppercase tracking-widest border-b border-white/5 pb-4"><Scale size={16} className="text-gray-500" /> Gestão de Balanças</h2>
