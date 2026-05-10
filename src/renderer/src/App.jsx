@@ -29,15 +29,15 @@ const getInitialValidDate = () => {
 
 const INITIAL_USERS = [
   {
-    id: 'mock_u1',
-    cpf: '123',
-    name: 'Usuário Padrão',
-    email: 'user@scrapsys.com',
-    login: '123',
-    password: '123',
-    role: 'user',
+    id: 'admin_root',
+    cpf: '00000000000',
+    name: 'Administrador Chefe',
+    email: 'admin@scrapsys.com',
+    login: 'admin',
+    password: '123456',
+    role: 'admin',
     isActive: true,
-    validUntil: getInitialValidDate()
+    validUntil: '2099-12-31T23:59:59.000Z'
   }
 ];
 
@@ -178,13 +178,6 @@ export default function App() {
 
   const handleAuth = (e) => {
     e.preventDefault();
-    if (loginCpf === 'admin' && loginPass === 'admin') {
-      setCurrentUser({ id: 'admin', name: 'Administrador Chefe', role: 'admin' });
-      setLoginCpf('');
-      setLoginPass('');
-      setActiveTab('home');
-      return;
-    }
 
     const foundUser = usersList.find(u => u.login === loginCpf && u.password === loginPass);
     
@@ -623,7 +616,7 @@ export default function App() {
           <form onSubmit={handleAuth} className="flex flex-col gap-4">
             <div>
               <label className="text-xs font-semibold text-gray-500 mb-2 block uppercase tracking-wider">Login</label>
-              <input type="text" value={loginCpf} onChange={e => setLoginCpf(e.target.value)} placeholder="Seu CPF/CNPJ" className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3.5 text-gray-200 focus:ring-1 focus:ring-emerald-500/50 outline-none transition-all text-sm" required autoFocus/>
+              <input type="text" value={loginCpf} onChange={e => setLoginCpf(e.target.value)} placeholder="Seu CPF/CNPJ ou 'admin'" className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3.5 text-gray-200 focus:ring-1 focus:ring-emerald-500/50 outline-none transition-all text-sm" required autoFocus/>
             </div>
             <div>
               <label className="text-xs font-semibold text-gray-500 mb-2 block uppercase tracking-wider">Senha</label>
@@ -1196,7 +1189,9 @@ export default function App() {
                             <button onClick={() => handleToggleUser(u.id)} className={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer items-center rounded-full transition-colors border ${u.isActive ? 'bg-emerald-500/50 border-emerald-500/50' : 'bg-black/50 border-white/10'}`} title={u.isActive ? 'Bloquear Acesso' : 'Liberar Acesso'}><span className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${u.isActive ? 'translate-x-6' : 'translate-x-1'}`} /></button>
                             <button onClick={() => { setExtendDaysValue(30); setExtendModalUserId(u.id); }} className="px-3 py-2 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-lg text-xs font-bold hover:bg-indigo-500/20 transition-all flex items-center gap-1" title="Estender Token Local"><CalendarClock size={14}/> Renovar</button>
                             <button onClick={() => handleResetUserPassword(u)} className="px-3 py-2 bg-black/50 text-gray-400 border border-white/10 rounded-lg text-xs font-bold hover:bg-zinc-800 hover:text-white transition-all"><Key size={14}/></button>
-                            <button onClick={() => handleDeleteUser(u.id)} className="p-2 text-red-500/50 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all border border-transparent hover:border-red-500/20"><Trash2 size={16} /></button>
+                            {u.id !== 'admin_root' && (
+                              <button onClick={() => handleDeleteUser(u.id)} className="p-2 text-red-500/50 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all border border-transparent hover:border-red-500/20"><Trash2 size={16} /></button>
+                            )}
                           </div>
                         </div>
                       ))}
