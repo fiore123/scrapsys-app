@@ -192,9 +192,10 @@ export default function App() {
     setIsCheckingUpdate(true);
     if (window.electronAPI && window.electronAPI.checkForUpdates) {
       window.electronAPI.checkForUpdates();
+      // Mostra mensagem temporária para o utilizador saber que clicou
       setTimeout(() => {
         setIsCheckingUpdate(false);
-        showToast("Verificação enviada ao servidor.");
+        showToast("Verificação enviada ao servidor...");
       }, 2000);
     } else {
       setTimeout(() => {
