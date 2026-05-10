@@ -674,7 +674,7 @@ export default function App() {
               <Scale className="text-emerald-400" size={40} />
             </div>
             <h1 className="text-3xl font-black tracking-tight text-white/90">ScrapSys</h1>
-            <p className="text-sm text-gray-500 tracking-widest uppercase mt-1">Industrial Offline System</p>
+            <p className="text-sm text-gray-500 tracking-widest uppercase mt-1">Offline System</p>
           </div>
 
           <form onSubmit={handleAuth} className="flex flex-col gap-4">
