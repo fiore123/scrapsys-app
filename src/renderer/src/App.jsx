@@ -117,7 +117,14 @@ export default function App() {
   const currentScale = scales.find(s => s.id === activeScaleId);
   const scaleConnected = currentScale?.isConnected || false;
 
-  const [usersList, setUsersList] = useState(() => loadData('global_usersList', INITIAL_USERS));
+  const [usersList, setUsersList] = useState(() => {
+    const loadedUsers = loadData('global_usersList', INITIAL_USERS);
+    const hasAdmin = loadedUsers.some(u => u.role === 'admin');
+    if (!hasAdmin) {
+      return [INITIAL_USERS[0], ...loadedUsers];
+    }
+    return loadedUsers;
+  });
   const [userSearchTerm, setUserSearchTerm] = useState('');
   
   const [newUserCpf, setNewUserCpf] = useState('');
@@ -616,7 +623,7 @@ export default function App() {
           <form onSubmit={handleAuth} className="flex flex-col gap-4">
             <div>
               <label className="text-xs font-semibold text-gray-500 mb-2 block uppercase tracking-wider">Login</label>
-              <input type="text" value={loginCpf} onChange={e => setLoginCpf(e.target.value)} placeholder="Seu CPF/CNPJ ou 'admin'" className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3.5 text-gray-200 focus:ring-1 focus:ring-emerald-500/50 outline-none transition-all text-sm" required autoFocus/>
+              <input type="text" value={loginCpf} onChange={e => setLoginCpf(e.target.value)} placeholder="Seu CPF/CNPJ" className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3.5 text-gray-200 focus:ring-1 focus:ring-emerald-500/50 outline-none transition-all text-sm" required autoFocus/>
             </div>
             <div>
               <label className="text-xs font-semibold text-gray-500 mb-2 block uppercase tracking-wider">Senha</label>
