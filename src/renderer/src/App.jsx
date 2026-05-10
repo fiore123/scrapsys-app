@@ -6,7 +6,7 @@ import {
   Home, PieChart, PackagePlus, Tag, QrCode,
   ChevronRight, ChevronDown, Usb, Wifi, MonitorSmartphone, Server,
   FileText, Users, UserPlus, Shield, Copy, Mail, Key, Power, PowerOff, X,
-  LogOut, CalendarClock, RefreshCw, Download
+  LogOut, CalendarClock, RefreshCw, Download, Info
 } from 'lucide-react';
 
 const INITIAL_SCRAPS = [
@@ -143,9 +143,17 @@ export default function App() {
   const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
 
+  const [appVersion, setAppVersion] = useState('1.0.X (Simulação)');
+
   useEffect(() => {
     saveData('global_usersList', usersList);
   }, [usersList]);
+
+  useEffect(() => {
+    if (window.electronAPI && window.electronAPI.getVersion) {
+      setAppVersion(window.electronAPI.getVersion());
+    }
+  }, []);
 
   useEffect(() => {
     if (currentUser && currentUser.role !== 'admin') {
@@ -1179,7 +1187,10 @@ export default function App() {
               <h2 className="text-sm font-bold mb-4 flex items-center gap-2 text-gray-300 uppercase tracking-widest border-b border-white/5 pb-4"><RefreshCw size={16} className="text-gray-500" /> Atualizações do Sistema</h2>
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between relative z-10 gap-4">
                 <div>
-                  <p className="text-sm font-bold text-gray-200">Verificar Novas Versões</p>
+                  <div className="flex items-center gap-3">
+                    <p className="text-sm font-bold text-gray-200">Verificar Novas Versões</p>
+                    <span className="px-2 py-0.5 rounded bg-blue-500/20 text-blue-400 text-[10px] font-bold tracking-widest border border-blue-500/20">v{appVersion}</span>
+                  </div>
                   <p className="text-xs text-gray-500 mt-1">Sincronize com o servidor para garantir que possui a última versão do ScrapSys instalada.</p>
                 </div>
                 <button

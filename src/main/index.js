@@ -58,10 +58,13 @@ app.whenReady().then(() => {
   })
 
   ipcMain.on('ping', () => console.log('pong'))
+  
+  
 
   // Evitar erros no console do React tentando salvar dados
   ipcMain.on('save-data', (event, key, data) => {});
   ipcMain.on('load-data', (event, key) => { event.returnValue = null; });
+  ipcMain.on('get-version', (event) => { event.returnValue = app.getVersion(); });
 
   createWindow()
 

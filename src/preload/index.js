@@ -6,6 +6,7 @@ const api = {}
 contextBridge.exposeInMainWorld('electronAPI', {
   loadData: (key) => ipcRenderer.sendSync('load-data', key),
   saveData: (key, data) => ipcRenderer.send('save-data', key, data),
+  getVersion: () => ipcRenderer.sendSync('get-version'),
   
   // NOSSAS FUNÇÕES DE ATUALIZAÇÃO:
   onUpdateAvailable: (callback) => ipcRenderer.on('update_available', () => callback()),
