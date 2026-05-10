@@ -4,11 +4,14 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { autoUpdater } from 'electron-updater'
 
+app.setName('ScrapSys')
+
 function createWindow() {
   const mainWindow = new BrowserWindow({
     width: 900,
     height: 670,
     show: false,
+    title: 'ScrapSys',
     autoHideMenuBar: true, 
     fullscreen: true,     
     webPreferences: {
