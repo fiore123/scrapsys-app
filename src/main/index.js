@@ -1,15 +1,12 @@
 import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
-import fs from 'fs' // <-- NOVO: Módulo nativo do Windows para gravar ficheiros
+import fs from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { autoUpdater } from 'electron-updater'
 
-// Força o nome do processo do Windows a ser ScrapSys
 app.setName('ScrapSys')
 
-// === SISTEMA DE BANCO DE DADOS OFFLINE SEGURO ===
-// Cria um ficheiro invisível na pasta do Windows (AppData) que não é apagado nas atualizações
 const dbPath = join(app.getPath('userData'), 'scrapsys_database.json')
 
 function loadDatabase() {
@@ -21,6 +18,7 @@ function loadDatabase() {
   } catch (error) {
     console.error('Erro ao ler banco de dados:', error)
   }
+
   return {}
 }
 
@@ -28,13 +26,16 @@ function saveToDatabase(key, data) {
   try {
     const db = loadDatabase()
     db[key] = data
-    // Grava no disco rígido do PC imediatamente
-    fs.writeFileSync(dbPath, JSON.stringify(db, null, 2))
+
+    fs.mkdirSync(app.getPath('userData'), { recursive: true })
+    fs.writeFileSync(dbPath, JSON.stringify(db, null, 2), 'utf8')
+
+    return true
   } catch (error) {
     console.error('Erro ao salvar no banco de dados:', error)
+    return false
   }
 }
-// ================================================
 
 function createWindow() {
   const mainWindow = new BrowserWindow({
@@ -42,10 +43,10 @@ function createWindow() {
     height: 670,
     show: false,
     title: 'ScrapSys',
-    autoHideMenuBar: true, 
-    fullscreen: true,     
+    autoHideMenuBar: true,
+    fullscreen: true,
     webPreferences: {
-      devTools: false,     
+      devTools: false,
       nodeIntegration: false,
       contextIsolation: true,
       preload: join(__dirname, '../preload/index.js')
@@ -54,12 +55,13 @@ function createWindow() {
 
   mainWindow.webContents.on('before-input-event', (event, input) => {
     if (input.control && input.shift && input.key.toLowerCase() === 'i') {
-      event.preventDefault();
+      event.preventDefault()
     }
+
     if (input.control && input.key.toLowerCase() === 'r') {
-      event.preventDefault();
+      event.preventDefault()
     }
-  });
+  })
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
@@ -78,13 +80,12 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  electronApp.setAppUserModelId('com.electron')
+  electronApp.setAppUserModelId('com.scrapsys.app')
 
-  // === 1. INICIAR COM O WINDOWS AUTOMATICAMENTE ===
   app.setLoginItemSettings({
     openAtLogin: true,
-    path: app.getPath('exe') 
-  });
+    path: app.getPath('exe')
+  })
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
@@ -92,47 +93,86 @@ app.whenReady().then(() => {
 
   ipcMain.on('ping', () => console.log('pong'))
 
-  // === COMUNICAÇÃO DE DADOS (AGORA GRAVANDO DE VERDADE) ===
-  ipcMain.on('save-data', (event, key, data) => {
-    saveToDatabase(key, data)
-  });
+  ipcMain.handle('save-data', async (_, key, data) => {
+    return saveToDatabase(key, data)
+  })
 
-  ipcMain.on('load-data', (event, key) => {
+  ipcMain.handle('load-data', async (_, key) => {
     const db = loadDatabase()
-    event.returnValue = db[key] || null
-  });
+    return db[key] ?? null
+  })
 
-  ipcMain.on('get-version', (event) => { 
-    event.returnValue = app.getVersion(); 
-  });
+  ipcMain.handle('get-version', async () => {
+    return app.getVersion()
+  })
+
+  ipcMain.on('apply_update', () => {
+    autoUpdater.quitAndInstall()
+  })
+
+  ipcMain.handle('check_for_updates', async () => {
+    if (is.dev) {
+      return {
+        ok: false,
+        message: 'Atualizações automáticas não rodam em modo desenvolvimento.'
+      }
+    }
+
+    try {
+      const result = await autoUpdater.checkForUpdatesAndNotify()
+      return {
+        ok: true,
+        result
+      }
+    } catch (error) {
+      console.error('Erro ao procurar atualizações:', error)
+
+      return {
+        ok: false,
+        message: error?.message || String(error)
+      }
+    }
+  })
+
+  autoUpdater.autoDownload = true
+
+  autoUpdater.on('checking-for-update', () => {
+    console.log('Verificando atualizações...')
+  })
+
+  autoUpdater.on('update-available', (info) => {
+    console.log('Atualização disponível:', info)
+  })
+
+  autoUpdater.on('update-not-available', (info) => {
+    console.log('Nenhuma atualização encontrada:', info)
+  })
+
+  autoUpdater.on('error', (error) => {
+    console.error('Erro no autoUpdater:', error)
+  })
+
+  autoUpdater.on('download-progress', (progress) => {
+    console.log(`Download atualização: ${Math.round(progress.percent)}%`)
+  })
+
+  autoUpdater.on('update-downloaded', () => {
+    console.log('Atualização baixada.')
+
+    const windows = BrowserWindow.getAllWindows()
+
+    if (windows.length > 0) {
+      windows[0].webContents.send('update_available')
+    }
+  })
 
   createWindow()
 
-  // === 2. SISTEMA DE ATUALIZAÇÃO (GITHUB) ===
-  // Só verifica atualizações automáticas ao abrir se estiver em produção
   if (!is.dev) {
-    autoUpdater.checkForUpdatesAndNotify();
+    autoUpdater.checkForUpdatesAndNotify().catch((error) => {
+      console.error('Erro ao verificar atualizações automaticamente:', error)
+    })
   }
-
-  // Quando o pacote for baixado do GitHub em segundo plano
-  autoUpdater.on('update-downloaded', () => {
-    const windows = BrowserWindow.getAllWindows();
-    if (windows.length > 0) {
-      windows[0].webContents.send('update_available'); // Avisa o React
-    }
-  });
-
-  // Quando o usuário clicar em "Atualizar" no pop-up do React
-  ipcMain.on('apply_update', () => {
-    autoUpdater.quitAndInstall(); // Fecha e instala
-  });
-
-  // Quando o usuário clicar em "Procurar Atualizações" manualmente nas configurações
-  ipcMain.on('check_for_updates', () => {
-    if (!is.dev) {
-      autoUpdater.checkForUpdatesAndNotify();
-    }
-  });
 
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

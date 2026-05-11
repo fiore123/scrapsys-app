@@ -1,11 +1,22 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 contextBridge.exposeInMainWorld('electronAPI', {
-  loadData: (key) => ipcRenderer.sendSync('load-data', key),
-  saveData: (key, data) => ipcRenderer.send('save-data', key, data),
-  getVersion: () => ipcRenderer.sendSync('get-version'),
-  
-  onUpdateAvailable: (callback) => ipcRenderer.on('update_available', () => callback()),
+  loadData: (key) => ipcRenderer.invoke('load-data', key),
+
+  saveData: (key, data) => ipcRenderer.invoke('save-data', key, data),
+
+  getVersion: () => ipcRenderer.invoke('get-version'),
+
+  onUpdateAvailable: (callback) => {
+    const listener = () => callback()
+    ipcRenderer.on('update_available', listener)
+
+    return () => {
+      ipcRenderer.removeListener('update_available', listener)
+    }
+  },
+
   applyUpdate: () => ipcRenderer.send('apply_update'),
-  checkForUpdates: () => ipcRenderer.send('check_for_updates')
+
+  checkForUpdates: () => ipcRenderer.invoke('check_for_updates')
 })
