@@ -21,6 +21,10 @@ const INITIAL_SCRAPS = [
   { code: '009', name: 'Metal / Latão', price: 22.00 }
 ];
 
+const INITIAL_SCALE = [
+  { id: 'sc_1', name: 'Balança Principal', type: 'bluetooth', isConnected: false }
+];
+
 const getInitialValidDate = () => {
   const d = new Date();
   d.setDate(d.getDate() + 30);
@@ -47,27 +51,34 @@ const INITIAL_PRINTERS = [
   { id: 'pr_3', name: 'Epson EcoTank L3150', type: 'a4', isDefault: true }
 ];
 
-const loadData = (key, defaultData) => {
+const loadData = async (key, defaultData) => {
   try {
     if (window.electronAPI && window.electronAPI.loadData) {
-      const data = window.electronAPI.loadData(key);
-      return data ? data : defaultData;
+      const data = await window.electronAPI.loadData(key);
+      return data ?? defaultData;
     }
+
     const saved = localStorage.getItem(key);
     return saved ? JSON.parse(saved) : defaultData;
   } catch (e) {
+    console.error(`Erro ao carregar ${key}:`, e);
     return defaultData;
   }
 };
 
-const saveData = (key, data) => {
+const saveData = async (key, data) => {
   try {
     if (window.electronAPI && window.electronAPI.saveData) {
-      window.electronAPI.saveData(key, data);
-    } else {
-      localStorage.setItem(key, JSON.stringify(data));
+      await window.electronAPI.saveData(key, data);
+      return true;
     }
-  } catch (e) {}
+
+    localStorage.setItem(key, JSON.stringify(data));
+    return true;
+  } catch (e) {
+    console.error(`Erro ao salvar ${key}:`, e);
+    return false;
+  }
 };
 
 export default function App() {
@@ -76,11 +87,13 @@ export default function App() {
   const [loginPass, setLoginPass] = useState('');
 
   const [activeTab, setActiveTab] = useState('home');
-  const [scraps, setScraps] = useState(() => loadData('scraps', INITIAL_SCRAPS));
-  const [transactions, setTransactions] = useState(() => loadData('transactions', []));
-  const [initialCash, setInitialCash] = useState(() => loadData('initialCash', 5000)); 
+
+  const [scraps, setScraps] = useState(INITIAL_SCRAPS);
+  const [transactions, setTransactions] = useState([]);
+  const [initialCash, setInitialCash] = useState(5000);
+
   const [isEditingCash, setIsEditingCash] = useState(false);
-  const [tempCash, setTempCash] = useState(initialCash);
+  const [tempCash, setTempCash] = useState(5000);
   const [isCashModalOpen, setIsCashModalOpen] = useState(false);
   const [cashAdjustmentValue, setCashAdjustmentValue] = useState('');
   
@@ -99,11 +112,11 @@ export default function App() {
   const [pricePerKg, setPricePerKg] = useState(0);
   const [isCustomPrice, setIsCustomPrice] = useState(false);
   
-  const [scales, setScales] = useState(() => loadData('scales', [{ id: 'sc_1', name: 'Balança Principal', type: 'bluetooth', isConnected: false }]));
+  const [scales, setScales] = useState(INITIAL_SCALE);
   const [activeScaleId, setActiveScaleId] = useState('sc_1');
   const [scaleLocked, setScaleLocked] = useState(false);
 
-  const [printers, setPrinters] = useState(() => loadData('printers', INITIAL_PRINTERS));
+  const [printers, setPrinters] = useState(INITIAL_PRINTERS);
   const [newPrinterName, setNewPrinterName] = useState('');
   const [newPrinterType, setNewPrinterType] = useState('receipt');
 
@@ -117,14 +130,7 @@ export default function App() {
   const currentScale = scales.find(s => s.id === activeScaleId);
   const scaleConnected = currentScale?.isConnected || false;
 
-  const [usersList, setUsersList] = useState(() => {
-    const loadedUsers = loadData('global_usersList', INITIAL_USERS);
-    const hasAdmin = loadedUsers.some(u => u.role === 'admin');
-    if (!hasAdmin) {
-      return [INITIAL_USERS[0], ...loadedUsers];
-    }
-    return loadedUsers;
-  });
+  const [usersList, setUsersList] = useState(INITIAL_USERS);
   const [userSearchTerm, setUserSearchTerm] = useState('');
   
   const [newUserCpf, setNewUserCpf] = useState('');
@@ -143,48 +149,135 @@ export default function App() {
   const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
 
-  const [appVersion, setAppVersion] = useState('1.0.X (Simulação)');
+  const [appVersion, setAppVersion] = useState('1.0.X');
+
+  const [newScrapName, setNewScrapName] = useState('');
+  const [newScrapPrice, setNewScrapPrice] = useState('');
+  const [currentItems, setCurrentItems] = useState([]);
+  const [isPriceListOpen, setIsPriceListOpen] = useState(false);
+  const [isInventoryListOpen, setIsInventoryListOpen] = useState(false);
+  const [receiptTx, setReceiptTx] = useState(null);
+  const [labelPreview, setLabelPreview] = useState(null);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadUsers = async () => {
+      const loadedUsers = await loadData('global_usersList', INITIAL_USERS);
+      const safeUsers = Array.isArray(loadedUsers) ? loadedUsers : INITIAL_USERS;
+      const hasAdmin = safeUsers.some(u => u.role === 'admin');
+
+      if (!isMounted) return;
+
+      if (!hasAdmin) {
+        setUsersList([INITIAL_USERS[0], ...safeUsers]);
+      } else {
+        setUsersList(safeUsers);
+      }
+    };
+
+    loadUsers();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     saveData('global_usersList', usersList);
   }, [usersList]);
 
   useEffect(() => {
-    if (window.electronAPI && window.electronAPI.getVersion) {
-      setAppVersion(window.electronAPI.getVersion());
-    }
+    const loadVersion = async () => {
+      try {
+        if (window.electronAPI && window.electronAPI.getVersion) {
+          const version = await window.electronAPI.getVersion();
+          setAppVersion(version);
+        }
+      } catch (error) {
+        console.error('Erro ao obter versão:', error);
+      }
+    };
+
+    loadVersion();
   }, []);
 
   useEffect(() => {
-    if (currentUser && currentUser.role !== 'admin') {
-      setScraps(loadData(`${currentUser.id}_scraps`, INITIAL_SCRAPS));
-      setTransactions(loadData(`${currentUser.id}_transactions`, []));
-      setInitialCash(loadData(`${currentUser.id}_initialCash`, 5000));
-      setScales(loadData(`${currentUser.id}_scales`, [{ id: 'sc_1', name: 'Balança Principal', type: 'bluetooth', isConnected: false }]));
-      setPrinters(loadData(`${currentUser.id}_printers`, INITIAL_PRINTERS));
-    } else if (currentUser && currentUser.role === 'admin') {
-      setScraps(INITIAL_SCRAPS);
-      setTransactions([]);
-      setInitialCash(5000);
-      setScales([{ id: 'sc_1', name: 'Balança Principal', type: 'bluetooth', isConnected: false }]);
-      setPrinters(INITIAL_PRINTERS);
-    }
+    if (!currentUser) return;
+
+    let isMounted = true;
+
+    const loadUserData = async () => {
+      const userKey = currentUser.id;
+
+      const loadedScraps = await loadData(`${userKey}_scraps`, INITIAL_SCRAPS);
+      const loadedTransactions = await loadData(`${userKey}_transactions`, []);
+      const loadedInitialCash = await loadData(`${userKey}_initialCash`, 5000);
+      const loadedScales = await loadData(`${userKey}_scales`, INITIAL_SCALE);
+      const loadedPrinters = await loadData(`${userKey}_printers`, INITIAL_PRINTERS);
+
+      if (!isMounted) return;
+
+      setScraps(Array.isArray(loadedScraps) ? loadedScraps : INITIAL_SCRAPS);
+      setTransactions(Array.isArray(loadedTransactions) ? loadedTransactions : []);
+      setInitialCash(typeof loadedInitialCash === 'number' ? loadedInitialCash : 5000);
+      setTempCash(typeof loadedInitialCash === 'number' ? loadedInitialCash : 5000);
+      setScales(Array.isArray(loadedScales) ? loadedScales : INITIAL_SCALE);
+      setPrinters(Array.isArray(loadedPrinters) ? loadedPrinters : INITIAL_PRINTERS);
+
+      const safeScales = Array.isArray(loadedScales) ? loadedScales : INITIAL_SCALE;
+      setActiveScaleId(safeScales[0]?.id || 'sc_1');
+      setScaleLocked(false);
+      setWeight('');
+      setCode('');
+      setSelectedScrap(null);
+      setCurrentItems([]);
+    };
+
+    loadUserData();
+
+    return () => {
+      isMounted = false;
+    };
   }, [currentUser]);
 
-  useEffect(() => { if (currentUser && currentUser.role !== 'admin') saveData(`${currentUser.id}_scraps`, scraps); }, [scraps, currentUser]);
-  useEffect(() => { if (currentUser && currentUser.role !== 'admin') saveData(`${currentUser.id}_transactions`, transactions); }, [transactions, currentUser]);
-  useEffect(() => { if (currentUser && currentUser.role !== 'admin') saveData(`${currentUser.id}_initialCash`, initialCash); }, [initialCash, currentUser]);
-  useEffect(() => { if (currentUser && currentUser.role !== 'admin') saveData(`${currentUser.id}_scales`, scales); }, [scales, currentUser]);
-  useEffect(() => { if (currentUser && currentUser.role !== 'admin') saveData(`${currentUser.id}_printers`, printers); }, [printers, currentUser]);
+  useEffect(() => {
+    if (currentUser) saveData(`${currentUser.id}_scraps`, scraps);
+  }, [scraps, currentUser]);
+
+  useEffect(() => {
+    if (currentUser) saveData(`${currentUser.id}_transactions`, transactions);
+  }, [transactions, currentUser]);
+
+  useEffect(() => {
+    if (currentUser) saveData(`${currentUser.id}_initialCash`, initialCash);
+  }, [initialCash, currentUser]);
+
+  useEffect(() => {
+    if (currentUser) saveData(`${currentUser.id}_scales`, scales);
+  }, [scales, currentUser]);
+
+  useEffect(() => {
+    if (currentUser) saveData(`${currentUser.id}_printers`, printers);
+  }, [printers, currentUser]);
 
   useEffect(() => {
     if (window.electronAPI && window.electronAPI.onUpdateAvailable) {
-      window.electronAPI.onUpdateAvailable(() => setUpdateAvailable(true));
+      const removeListener = window.electronAPI.onUpdateAvailable(() => {
+        setUpdateAvailable(true);
+      });
+
+      return () => {
+        if (typeof removeListener === 'function') {
+          removeListener();
+        }
+      };
     }
   }, []);
 
   const handleApplyUpdate = () => {
     setIsUpdating(true);
+
     if (window.electronAPI && window.electronAPI.applyUpdate) {
       window.electronAPI.applyUpdate();
     } else {
@@ -196,20 +289,26 @@ export default function App() {
     }
   };
 
-  const handleCheckForUpdates = () => {
+  const handleCheckForUpdates = async () => {
     setIsCheckingUpdate(true);
-    if (window.electronAPI && window.electronAPI.checkForUpdates) {
-      window.electronAPI.checkForUpdates();
-      // Mostra mensagem temporária para o utilizador saber que clicou
-      setTimeout(() => {
-        setIsCheckingUpdate(false);
-        showToast("Verificação enviada ao servidor...");
-      }, 2000);
-    } else {
-      setTimeout(() => {
-        setIsCheckingUpdate(false);
+
+    try {
+      if (window.electronAPI && window.electronAPI.checkForUpdates) {
+        const result = await window.electronAPI.checkForUpdates();
+
+        if (result?.ok === false) {
+          showToast(result.message || "Não foi possível verificar atualizações.");
+        } else {
+          showToast("Verificação enviada ao servidor.");
+        }
+      } else {
         showToast("Simulação: O sistema já está na versão mais recente.");
-      }, 2000);
+      }
+    } catch (error) {
+      console.error("Erro ao verificar atualizações:", error);
+      showToast("Erro ao verificar atualizações.");
+    } finally {
+      setIsCheckingUpdate(false);
     }
   };
 
@@ -223,10 +322,12 @@ export default function App() {
         showToast("Este usuário foi desativado pelo administrador.");
         return;
       }
+
       if (new Date() > new Date(foundUser.validUntil)) {
         showToast("Licença offline expirada. Contate o administrador.");
         return;
       }
+
       setCurrentUser(foundUser);
       setLoginCpf('');
       setLoginPass('');
@@ -239,18 +340,26 @@ export default function App() {
   const handleLogout = () => {
     setCurrentUser(null);
     setActiveTab('home');
+    setCurrentItems([]);
+    setWeight('');
+    setCode('');
+    setSelectedScrap(null);
+    setScaleLocked(false);
   };
 
   const handleChangePassword = (e) => {
     e.preventDefault();
+
     if (currentPasswordInput !== currentUser.password) {
       showToast("Senha atual incorreta.");
       return;
     }
+
     if (newPasswordInput !== confirmPasswordInput) {
       showToast("As novas senhas não coincidem.");
       return;
     }
+
     if (newPasswordInput.length < 6) {
       showToast("A nova senha deve ter no mínimo 6 caracteres.");
       return;
@@ -259,6 +368,7 @@ export default function App() {
     const updatedUsers = usersList.map(u => 
       u.id === currentUser.id ? { ...u, password: newPasswordInput } : u
     );
+
     setUsersList(updatedUsers);
     setCurrentUser({ ...currentUser, password: newPasswordInput });
     
@@ -270,9 +380,11 @@ export default function App() {
 
   const handleSearchHardware = async () => {
     setIsSearchingDevice(true);
+
     try {
       if (window.electronAPI && window.electronAPI.searchHardware) {
         const deviceName = await window.electronAPI.searchHardware(newScaleType);
+
         if (deviceName) {
           setNewScaleName(deviceName);
           showToast("Equipamento detectado via integração nativa.");
@@ -309,40 +421,60 @@ export default function App() {
 
   const handleAddScale = (e) => {
     e.preventDefault();
+
     if (!newScaleName) return;
+
     if (newScaleType === 'rj45' && !newScaleIp) {
       showToast("Introduza o endereço IP da balança.");
       return;
     }
+
     const newScale = { 
       id: Math.random().toString(36).substr(2, 9), 
-      name: newScaleName, type: newScaleType, ip: newScaleType === 'rj45' ? newScaleIp : null, isConnected: false 
+      name: newScaleName,
+      type: newScaleType,
+      ip: newScaleType === 'rj45' ? newScaleIp : null,
+      isConnected: false 
     };
+
     setScales([...scales, newScale]);
-    setNewScaleName(''); setNewScaleIp('');
+    setNewScaleName('');
+    setNewScaleIp('');
+
     if (scales.length === 0) setActiveScaleId(newScale.id);
+
     showToast("Balança adicionada.");
   };
 
-  const toggleScaleConnection = (id) => setScales(scales.map(s => s.id === id ? { ...s, isConnected: !s.isConnected } : s));
+  const toggleScaleConnection = (id) => {
+    setScales(scales.map(s => s.id === id ? { ...s, isConnected: !s.isConnected } : s));
+  };
   
   const handleDeleteScale = (id) => {
     const filtered = scales.filter(s => s.id !== id);
     setScales(filtered);
-    if (activeScaleId === id) setActiveScaleId(filtered.length > 0 ? filtered[0].id : '');
+
+    if (activeScaleId === id) {
+      setActiveScaleId(filtered.length > 0 ? filtered[0].id : '');
+    }
+
     showToast("Balança removida.");
   };
 
   const handleAddPrinter = (e) => {
     e.preventDefault();
+
     if (!newPrinterName) return;
+
     const isFirstOfType = !printers.some(p => p.type === newPrinterType);
+
     const newPrinter = {
       id: Math.random().toString(36).substr(2, 9),
       name: newPrinterName,
       type: newPrinterType,
       isDefault: isFirstOfType
     };
+
     setPrinters([...printers, newPrinter]);
     setNewPrinterName('');
     showToast("Impressora adicionada.");
@@ -353,6 +485,7 @@ export default function App() {
       if (p.type === type) return { ...p, isDefault: p.id === id };
       return p;
     }));
+
     showToast("Impressora padrão atualizada.");
   };
 
@@ -364,15 +497,21 @@ export default function App() {
   const generateRandomPassword = () => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$&*';
     let pass = '';
-    for (let i = 0; i < 8; i++) pass += chars.charAt(Math.floor(Math.random() * chars.length));
+
+    for (let i = 0; i < 8; i++) {
+      pass += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+
     return pass;
   };
 
   const handleGenerateUser = (e) => {
     e.preventDefault();
+
     if (!newUserCpf || !newUserName || !newUserEmail) return;
 
     const loginNumber = newUserCpf.replace(/\D/g, '');
+
     if (loginNumber.length < 11) {
       showToast("CPF/CNPJ inválido.");
       return;
@@ -386,14 +525,20 @@ export default function App() {
       name: newUserName,
       email: newUserEmail,
       login: loginNumber,
-      password: password,
+      password,
       role: 'user',
       isActive: true,
       validUntil: getInitialValidDate()
     };
 
     setUsersList([...usersList, newUser]);
-    setGeneratedCredentials({ login: loginNumber, password: password, name: newUserName, email: newUserEmail });
+    setGeneratedCredentials({
+      login: loginNumber,
+      password,
+      name: newUserName,
+      email: newUserEmail
+    });
+
     setNewUserCpf('');
     setNewUserName('');
     setNewUserEmail('');
@@ -404,12 +549,14 @@ export default function App() {
     textArea.value = text;
     document.body.appendChild(textArea);
     textArea.select();
+
     try {
       document.execCommand('copy');
       showToast("Copiado para a área de transferência!");
     } catch (err) {
       showToast("Erro ao copiar.");
     }
+
     document.body.removeChild(textArea);
   };
 
@@ -424,36 +571,40 @@ export default function App() {
 
   const handleResetUserPassword = (user) => {
     const newPass = generateRandomPassword();
+
     setUsersList(usersList.map(u => u.id === user.id ? { ...u, password: newPass } : u));
-    setGeneratedCredentials({ login: user.login, password: newPass, name: user.name, email: user.email });
+
+    setGeneratedCredentials({
+      login: user.login,
+      password: newPass,
+      name: user.name,
+      email: user.email
+    });
+
     showToast("Senha redefinida com sucesso.");
   };
 
   const handleExtendValidityConfirm = () => {
     const days = parseInt(extendDaysValue, 10);
+
     if (isNaN(days) || days <= 0) {
       showToast("Introduza um valor de dias válido.");
       return;
     }
+
     setUsersList(usersList.map(u => {
       if (u.id === extendModalUserId) {
         const newDate = new Date(u.validUntil);
         newDate.setDate(newDate.getDate() + days);
         return { ...u, validUntil: newDate.toISOString() };
       }
+
       return u;
     }));
+
     showToast(`Licença estendida em +${days} dias.`);
     setExtendModalUserId(null);
   };
-
-  const [newScrapName, setNewScrapName] = useState('');
-  const [newScrapPrice, setNewScrapPrice] = useState('');
-  const [currentItems, setCurrentItems] = useState([]);
-  const [isPriceListOpen, setIsPriceListOpen] = useState(false);
-  const [isInventoryListOpen, setIsInventoryListOpen] = useState(false);
-  const [receiptTx, setReceiptTx] = useState(null);
-  const [labelPreview, setLabelPreview] = useState(null);
 
   useEffect(() => {
     let interval;
@@ -464,6 +615,7 @@ export default function App() {
     if (scaleConnected && !scaleLocked && activeTab === 'home') {
       interval = setInterval(() => {
         ticks++;
+
         if (ticks >= ticksToStabilize) {
           setScaleLocked(true);
           setWeight(baseWeight.toFixed(2));
@@ -474,12 +626,14 @@ export default function App() {
         }
       }, 800);
     }
+
     return () => clearInterval(interval);
   }, [scaleConnected, scaleLocked, activeTab]);
 
   useEffect(() => {
     if (code.length >= 3) {
       const found = scraps.find(s => s.code === code || s.code.includes(code));
+
       if (found) {
         setSelectedScrap(found);
         if (!isCustomPrice) setPricePerKg(found.price);
@@ -491,13 +645,24 @@ export default function App() {
     }
   }, [code, scraps, isCustomPrice]);
 
-  const totalValue = useMemo(() => (parseFloat(weight) || 0) * pricePerKg, [weight, pricePerKg]);
-  const cartTotal = useMemo(() => currentItems.reduce((acc, item) => acc + item.total, 0), [currentItems]);
+  const totalValue = useMemo(() => {
+    return (parseFloat(weight) || 0) * pricePerKg;
+  }, [weight, pricePerKg]);
+
+  const cartTotal = useMemo(() => {
+    return currentItems.reduce((acc, item) => acc + item.total, 0);
+  }, [currentItems]);
+
   const grandTotal = cartTotal + totalValue;
 
   const stats = useMemo(() => {
     const now = new Date();
-    let daily = 0, weekly = 0, monthly = 0, totalSpent = 0, totalWeightKG = 0;
+
+    let daily = 0;
+    let weekly = 0;
+    let monthly = 0;
+    let totalSpent = 0;
+    let totalWeightKG = 0;
     let inventoryMap = {};
 
     transactions.forEach(t => {
@@ -509,20 +674,37 @@ export default function App() {
       if (t.items) {
         t.items.forEach(item => {
           totalWeightKG += item.weight;
-          if (!inventoryMap[item.code]) inventoryMap[item.code] = { code: item.code, name: item.scrap, weight: 0 };
+
+          if (!inventoryMap[item.code]) {
+            inventoryMap[item.code] = {
+              code: item.code,
+              name: item.scrap,
+              weight: 0
+            };
+          }
+
           inventoryMap[item.code].weight += item.weight;
         });
       }
 
       if (tDate.toDateString() === now.toDateString()) daily += t.total;
+
       const diffTime = Math.abs(now - tDate);
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
       if (diffDays <= 7) weekly += t.total;
-      if (tDate.getMonth() === now.getMonth() && tDate.getFullYear() === now.getFullYear()) monthly += t.total;
+
+      if (tDate.getMonth() === now.getMonth() && tDate.getFullYear() === now.getFullYear()) {
+        monthly += t.total;
+      }
     });
 
     return { 
-      daily, weekly, monthly, totalSpent, currentCash: initialCash - totalSpent,
+      daily,
+      weekly,
+      monthly,
+      totalSpent,
+      currentCash: initialCash - totalSpent,
       totalWeightTon: (totalWeightKG / 1000).toFixed(3),
       inventoryByCategory: Object.values(inventoryMap).sort((a, b) => b.weight - a.weight)
     };
@@ -530,7 +712,9 @@ export default function App() {
 
   const handleCashAdjustment = (type) => {
     const val = parseFloat(cashAdjustmentValue);
+
     if (isNaN(val) || val <= 0) return;
+
     if (type === 'add') {
       setInitialCash(prev => prev + val);
       showToast(`Suprimento de ${formatCurrency(val)} realizado.`);
@@ -538,29 +722,45 @@ export default function App() {
       setInitialCash(prev => prev - val);
       showToast(`Sangria de ${formatCurrency(val)} realizada.`);
     }
+
     setCashAdjustmentValue('');
     setIsCashModalOpen(false);
   };
 
   const handleAddMaterial = () => {
     if (!selectedScrap || !weight || parseFloat(weight) <= 0) return;
+
     setCurrentItems([...currentItems, {
       id: Math.random().toString(36).substr(2, 9),
-      scrap: selectedScrap.name, code: selectedScrap.code,
-      weight: parseFloat(weight), pricePerKg, total: totalValue
+      scrap: selectedScrap.name,
+      code: selectedScrap.code,
+      weight: parseFloat(weight),
+      pricePerKg,
+      total: totalValue
     }]);
-    setWeight(''); setCode(''); setSelectedScrap(null); setIsCustomPrice(false); setScaleLocked(false);
+
+    setWeight('');
+    setCode('');
+    setSelectedScrap(null);
+    setIsCustomPrice(false);
+    setScaleLocked(false);
   };
 
-  const handleRemoveItem = (id) => setCurrentItems(currentItems.filter(item => item.id !== id));
+  const handleRemoveItem = (id) => {
+    setCurrentItems(currentItems.filter(item => item.id !== id));
+  };
 
   const handleFinalize = () => {
     let finalItems = [...currentItems];
+
     if (selectedScrap && weight && parseFloat(weight) > 0) {
       finalItems.push({
         id: Math.random().toString(36).substr(2, 9),
-        scrap: selectedScrap.name, code: selectedScrap.code,
-        weight: parseFloat(weight), pricePerKg, total: totalValue
+        scrap: selectedScrap.name,
+        code: selectedScrap.code,
+        weight: parseFloat(weight),
+        pricePerKg,
+        total: totalValue
       });
     }
 
@@ -575,17 +775,40 @@ export default function App() {
       total: finalItems.reduce((acc, item) => acc + item.total, 0)
     }, ...transactions]);
     
-    setCurrentItems([]); setWeight(''); setCode(''); setSelectedScrap(null); setIsCustomPrice(false); setScaleLocked(false);
+    setCurrentItems([]);
+    setWeight('');
+    setCode('');
+    setSelectedScrap(null);
+    setIsCustomPrice(false);
+    setScaleLocked(false);
+
     showToast("Compra finalizada!");
-    setTimeout(() => { if (codeInputRef.current) codeInputRef.current.focus(); }, 50);
+
+    setTimeout(() => {
+      if (codeInputRef.current) codeInputRef.current.focus();
+    }, 50);
   };
 
   const handleRegisterScrap = (e) => {
     e.preventDefault();
+
     if (!newScrapName || !newScrapPrice) return;
-    const maxCode = scraps.reduce((max, s) => Math.max(max, !isNaN(parseInt(s.code, 10)) ? parseInt(s.code, 10) : 0), 0);
-    setScraps([...scraps, { code: String(maxCode + 1).padStart(3, '0'), name: newScrapName, price: parseFloat(newScrapPrice) }]);
-    setNewScrapName(''); setNewScrapPrice('');
+
+    const maxCode = scraps.reduce((max, s) => {
+      return Math.max(max, !isNaN(parseInt(s.code, 10)) ? parseInt(s.code, 10) : 0);
+    }, 0);
+
+    setScraps([
+      ...scraps,
+      {
+        code: String(maxCode + 1).padStart(3, '0'),
+        name: newScrapName,
+        price: parseFloat(newScrapPrice)
+      }
+    ]);
+
+    setNewScrapName('');
+    setNewScrapPrice('');
     showToast("Material cadastrado com sucesso.");
   };
 
@@ -594,11 +817,20 @@ export default function App() {
     showToast("Material removido.");
   };
   
-  const formatCurrency = (val) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
+  const formatCurrency = (val) => {
+    return new Intl.NumberFormat('pt-BR', {
+      style: 'currency',
+      currency: 'BRL'
+    }).format(val);
+  };
   
   const formatDateTime = (isoString) => {
     const d = new Date(isoString);
-    return `${d.toLocaleDateString('pt-BR')} às ${d.toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})}`;
+
+    return `${d.toLocaleDateString('pt-BR')} às ${d.toLocaleTimeString('pt-BR', {
+      hour: '2-digit',
+      minute: '2-digit'
+    })}`;
   };
 
   const formatDateOnly = (isoString) => {
@@ -627,31 +859,38 @@ export default function App() {
 
   const handlePreviewLabel = (scrap) => {
     const defaultPrinter = printers.find(p => p.type === 'label' && p.isDefault);
+
     if (!defaultPrinter) {
       showToast("Configure uma impressora de Etiqueta padrão primeiro.");
       return;
     }
+
     setLabelPreview(scrap);
   };
 
   const confirmPrintLabel = () => {
     const defaultPrinter = printers.find(p => p.type === 'label' && p.isDefault);
+
     if (window.electronAPI && window.electronAPI.printLabel) {
       window.electronAPI.printLabel(labelPreview, defaultPrinter);
     }
+
     showToast(`Impressão enviada para: ${defaultPrinter.name}`);
     setLabelPreview(null);
   };
 
   const printReceipt = () => {
     const defaultPrinter = printers.find(p => p.type === 'receipt' && p.isDefault);
+
     if (!defaultPrinter) {
       showToast("Configure uma impressora de Cupom padrão primeiro.");
       return;
     }
+
     if (window.electronAPI && window.electronAPI.printReceipt) {
       window.electronAPI.printReceipt(receiptTx, defaultPrinter);
     }
+
     showToast(`Cupom enviado para: ${defaultPrinter.name}`);
     setReceiptTx(null);
   };
