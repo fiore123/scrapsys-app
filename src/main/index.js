@@ -1,10 +1,40 @@
 import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
+import fs from 'fs' // <-- NOVO: Módulo nativo do Windows para gravar ficheiros
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { autoUpdater } from 'electron-updater'
 
+// Força o nome do processo do Windows a ser ScrapSys
 app.setName('ScrapSys')
+
+// === SISTEMA DE BANCO DE DADOS OFFLINE SEGURO ===
+// Cria um ficheiro invisível na pasta do Windows (AppData) que não é apagado nas atualizações
+const dbPath = join(app.getPath('userData'), 'scrapsys_database.json')
+
+function loadDatabase() {
+  try {
+    if (fs.existsSync(dbPath)) {
+      const rawData = fs.readFileSync(dbPath, 'utf8')
+      return JSON.parse(rawData)
+    }
+  } catch (error) {
+    console.error('Erro ao ler banco de dados:', error)
+  }
+  return {}
+}
+
+function saveToDatabase(key, data) {
+  try {
+    const db = loadDatabase()
+    db[key] = data
+    // Grava no disco rígido do PC imediatamente
+    fs.writeFileSync(dbPath, JSON.stringify(db, null, 2))
+  } catch (error) {
+    console.error('Erro ao salvar no banco de dados:', error)
+  }
+}
+// ================================================
 
 function createWindow() {
   const mainWindow = new BrowserWindow({
@@ -61,13 +91,20 @@ app.whenReady().then(() => {
   })
 
   ipcMain.on('ping', () => console.log('pong'))
-  
-  
 
-  // Evitar erros no console do React tentando salvar dados
-  ipcMain.on('save-data', (event, key, data) => {});
-  ipcMain.on('load-data', (event, key) => { event.returnValue = null; });
-  ipcMain.on('get-version', (event) => { event.returnValue = app.getVersion(); });
+  // === COMUNICAÇÃO DE DADOS (AGORA GRAVANDO DE VERDADE) ===
+  ipcMain.on('save-data', (event, key, data) => {
+    saveToDatabase(key, data)
+  });
+
+  ipcMain.on('load-data', (event, key) => {
+    const db = loadDatabase()
+    event.returnValue = db[key] || null
+  });
+
+  ipcMain.on('get-version', (event) => { 
+    event.returnValue = app.getVersion(); 
+  });
 
   createWindow()
 
