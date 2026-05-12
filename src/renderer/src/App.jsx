@@ -128,6 +128,9 @@ export default function App() {
 
   const [isScaleDropdownOpen, setIsScaleDropdownOpen] = useState(false);
 
+  const currentScale = scales.find(s => s.id === activeScaleId);
+  const scaleConnected = currentScale?.isConnected || false;
+
   const [usersList, setUsersList] = useState(INITIAL_USERS);
   const [userSearchTerm, setUserSearchTerm] = useState('');
   
@@ -157,12 +160,13 @@ export default function App() {
   const [receiptTx, setReceiptTx] = useState(null);
   const [labelPreview, setLabelPreview] = useState(null);
 
-  // === NOVO ESTADO: FORNECEDORES ===
+  // === NOVO: ESTADOS DOS FORNECEDORES ===
   const [suppliers, setSuppliers] = useState([]);
   const [newSupplierName, setNewSupplierName] = useState('');
   const [newSupplierPhone, setNewSupplierPhone] = useState('');
   const [newSupplierScrapCode, setNewSupplierScrapCode] = useState('');
   const [newSupplierTargetKg, setNewSupplierTargetKg] = useState('');
+  const [isScrapDropdownOpen, setIsScrapDropdownOpen] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -220,7 +224,7 @@ export default function App() {
       const loadedInitialCash = await loadData(`${userKey}_initialCash`, 5000);
       const loadedScales = await loadData(`${userKey}_scales`, INITIAL_SCALE);
       const loadedPrinters = await loadData(`${userKey}_printers`, INITIAL_PRINTERS);
-      const loadedSuppliers = await loadData(`${userKey}_suppliers`, []); // Carrega Fornecedores
+      const loadedSuppliers = await loadData(`${userKey}_suppliers`, []); // Carrega os fornecedores
 
       if (!isMounted) return;
 
@@ -268,36 +272,22 @@ export default function App() {
     if (currentUser) saveData(`${currentUser.id}_printers`, printers);
   }, [printers, currentUser]);
 
+  // Salvar fornecedores no banco de dados local
   useEffect(() => {
     if (currentUser) saveData(`${currentUser.id}_suppliers`, suppliers);
   }, [suppliers, currentUser]);
 
   useEffect(() => {
-    if (window.electronAPI) {
-      if (window.electronAPI.onUpdateAvailable) {
-        window.electronAPI.onUpdateAvailable(() => {
-          setUpdateAvailable(true);
-          setIsCheckingUpdate(false);
-        });
-      }
-      if (window.electronAPI.onUpdateFound) {
-        window.electronAPI.onUpdateFound(() => {
-          showToast("Nova versão encontrada! A transferir em segundo plano...");
-        });
-      }
-      if (window.electronAPI.onUpdateNotFound) {
-        window.electronAPI.onUpdateNotFound(() => {
-          setIsCheckingUpdate(false);
-          showToast("O sistema já está na versão mais recente.");
-        });
-      }
-      if (window.electronAPI.onUpdateError) {
-        window.electronAPI.onUpdateError((err) => {
-          setIsCheckingUpdate(false);
-          showToast("Erro ao ligar ao servidor de atualizações.");
-          console.error(err);
-        });
-      }
+    if (window.electronAPI && window.electronAPI.onUpdateAvailable) {
+      const removeListener = window.electronAPI.onUpdateAvailable(() => {
+        setUpdateAvailable(true);
+      });
+
+      return () => {
+        if (typeof removeListener === 'function') {
+          removeListener();
+        }
+      };
     }
   }, []);
 
@@ -315,15 +305,26 @@ export default function App() {
     }
   };
 
-  const handleCheckForUpdates = () => {
+  const handleCheckForUpdates = async () => {
     setIsCheckingUpdate(true);
-    if (window.electronAPI && window.electronAPI.checkForUpdates) {
-      window.electronAPI.checkForUpdates();
-    } else {
-      setTimeout(() => {
-        setIsCheckingUpdate(false);
-        showToast("Simulação: Não é possível buscar web no modo de testes.");
-      }, 2000);
+
+    try {
+      if (window.electronAPI && window.electronAPI.checkForUpdates) {
+        const result = await window.electronAPI.checkForUpdates();
+
+        if (result?.ok === false) {
+          showToast(result.message || "Não foi possível verificar atualizações.");
+        } else {
+          showToast("Verificação enviada ao servidor.");
+        }
+      } else {
+        showToast("Simulação: O sistema já está na versão mais recente.");
+      }
+    } catch (error) {
+      console.error("Erro ao verificar atualizações:", error);
+      showToast("Erro ao verificar atualizações.");
+    } finally {
+      setIsCheckingUpdate(false);
     }
   };
 
@@ -392,44 +393,6 @@ export default function App() {
     setConfirmPasswordInput('');
     showToast("Senha alterada com sucesso!");
   };
-
-  // === FUNÇÕES DE FORNECEDORES ===
-  const handleAddSupplier = (e) => {
-    e.preventDefault();
-    if (!newSupplierName || !newSupplierPhone || !newSupplierScrapCode || !newSupplierTargetKg) return;
-
-    const scrapRef = scraps.find(s => s.code === newSupplierScrapCode);
-    if (!scrapRef) return;
-
-    const newSupplier = {
-      id: Math.random().toString(36).substr(2, 9),
-      name: newSupplierName,
-      phone: newSupplierPhone.replace(/\D/g, ''), // Limpa máscara
-      scrapCode: scrapRef.code,
-      scrapName: scrapRef.name,
-      targetKg: parseFloat(newSupplierTargetKg)
-    };
-
-    setSuppliers([...suppliers, newSupplier]);
-    setNewSupplierName('');
-    setNewSupplierPhone('');
-    setNewSupplierScrapCode('');
-    setNewSupplierTargetKg('');
-    showToast("Fornecedor registado com sucesso.");
-  };
-
-  const handleDeleteSupplier = (id) => {
-    setSuppliers(suppliers.filter(s => s.id !== id));
-    showToast("Fornecedor removido.");
-  };
-
-  const sendWhatsAppMessage = (supplier, currentInventoryKg) => {
-    const message = `Olá ${supplier.name}, o ScrapSys informa que já temos ${currentInventoryKg.toFixed(1)}kg de ${supplier.scrapName} separados em estoque para a sua coleta.`;
-    const url = `https://wa.me/${supplier.phone}?text=${encodeURIComponent(message)}`;
-    
-    window.open(url, '_blank');
-  };
-  // ==================================
 
   const handleSearchHardware = async () => {
     setIsSearchingDevice(true);
@@ -545,6 +508,46 @@ export default function App() {
   const handleDeletePrinter = (id) => {
     setPrinters(printers.filter(p => p.id !== id));
     showToast("Impressora removida.");
+  };
+
+  // === MÓDULO DE FORNECEDORES ===
+  const handleAddSupplier = (e) => {
+    e.preventDefault();
+    if (!newSupplierName || !newSupplierPhone || !newSupplierScrapCode || !newSupplierTargetKg) {
+      showToast("Por favor, preencha todos os campos e selecione o material.");
+      return;
+    }
+
+    const scrapRef = scraps.find(s => s.code === newSupplierScrapCode);
+    if (!scrapRef) return;
+
+    const newSupplier = {
+      id: Math.random().toString(36).substr(2, 9),
+      name: newSupplierName,
+      phone: newSupplierPhone.replace(/\D/g, ''), // Limpa qualquer máscara
+      scrapCode: scrapRef.code,
+      scrapName: scrapRef.name,
+      targetKg: parseFloat(newSupplierTargetKg)
+    };
+
+    setSuppliers([...suppliers, newSupplier]);
+    setNewSupplierName('');
+    setNewSupplierPhone('');
+    setNewSupplierScrapCode('');
+    setNewSupplierTargetKg('');
+    showToast("Fornecedor registado com sucesso.");
+  };
+
+  const handleDeleteSupplier = (id) => {
+    setSuppliers(suppliers.filter(s => s.id !== id));
+    showToast("Fornecedor removido.");
+  };
+
+  const sendWhatsAppMessage = (supplier, currentInventoryKg) => {
+    const message = `Olá ${supplier.name}, o ScrapSys informa que já temos ${currentInventoryKg.toFixed(1)}kg de ${supplier.scrapName} separados em estoque para a sua coleta.`;
+    // Colocamos o 55 para o Brasil se quiser, ou deixa genérico
+    const url = `https://wa.me/55${supplier.phone}?text=${encodeURIComponent(message)}`;
+    window.open(url, '_blank');
   };
 
   const generateRandomPassword = () => {
@@ -760,7 +763,7 @@ export default function App() {
       currentCash: initialCash - totalSpent,
       totalWeightTon: (totalWeightKG / 1000).toFixed(3),
       inventoryByCategory: Object.values(inventoryMap).sort((a, b) => b.weight - a.weight),
-      inventoryMap 
+      inventoryMap // Correção fundamental: Permite que a aba de Fornecedores encontre o peso!
     };
   }, [transactions, initialCash, currentUser]);
 
@@ -949,7 +952,6 @@ export default function App() {
     setReceiptTx(null);
   };
 
-  // Blindagem contra quebra da lista de utilizadores na hora da busca
   const filteredUsers = usersList.filter(u => 
     (u.name || '').toLowerCase().includes(userSearchTerm.toLowerCase()) || 
     (u.login || '').includes(userSearchTerm) || 
@@ -1035,7 +1037,9 @@ export default function App() {
           <button onClick={() => setActiveTab('home')} title="Pesagem Rápida" className={`p-3 shrink-0 rounded-lg transition-all ${activeTab === 'home' ? 'bg-zinc-800 text-emerald-400 shadow-md border border-white/10' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}><Home size={22} /></button>
           <button onClick={() => setActiveTab('finance')} title="Financeiro" className={`p-3 shrink-0 rounded-lg transition-all ${activeTab === 'finance' ? 'bg-zinc-800 text-emerald-400 shadow-md border border-white/10' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}><PieChart size={22} /></button>
           <button onClick={() => setActiveTab('register')} title="Cadastro de Material" className={`p-3 shrink-0 rounded-lg transition-all ${activeTab === 'register' ? 'bg-zinc-800 text-emerald-400 shadow-md border border-white/10' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}><PackagePlus size={22} /></button>
+          
           <button onClick={() => setActiveTab('suppliers')} title="Fornecedores (Compradores)" className={`p-3 shrink-0 rounded-lg transition-all ${activeTab === 'suppliers' ? 'bg-zinc-800 text-emerald-400 shadow-md border border-white/10' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}><Truck size={22} /></button>
+
           <button onClick={() => setActiveTab('settings')} title="Configurações" className={`p-3 shrink-0 rounded-lg transition-all ${activeTab === 'settings' ? 'bg-zinc-800 text-emerald-400 shadow-md border border-white/10' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}><Settings size={22} /></button>
           
           {currentUser.role === 'admin' && (
@@ -1047,13 +1051,14 @@ export default function App() {
           
           <div className="w-px h-8 bg-white/10 my-auto mx-1 shrink-0"></div>
           <button onClick={() => setActiveTab('faq')} title="Central de Ajuda" className={`p-3 shrink-0 rounded-lg transition-all ${activeTab === 'faq' ? 'bg-zinc-800 text-emerald-400 shadow-md border border-white/10' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}><Info size={22} /></button>
+
           <button onClick={handleLogout} title="Sair do Sistema" className="p-3 shrink-0 rounded-lg transition-all text-red-500/50 hover:text-red-400 hover:bg-white/5"><LogOut size={22} /></button>
         </div>
       </header>
 
       <main className="flex-1 w-full flex flex-col items-center z-10 pb-10">
         
-        {/* === ABA HOME === */}
+        {/* ABA HOME */}
         {activeTab === 'home' && (
           <div className="w-full flex justify-center animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className={`flex flex-col lg:flex-row gap-6 items-start transition-all duration-500 w-full ${isPriceListOpen ? 'max-w-5xl' : 'max-w-3xl'}`}>
@@ -1215,7 +1220,7 @@ export default function App() {
           </div>
         )}
 
-        {/* === ABA FINANCEIRO === */}
+        {/* ABA FINANCEIRO */}
         {activeTab === 'finance' && (
           <div className="w-full flex justify-center animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className={`flex flex-col lg:flex-row gap-6 items-start transition-all duration-500 w-full ${isInventoryListOpen ? 'max-w-[85rem]' : 'max-w-6xl'}`}>
@@ -1293,7 +1298,7 @@ export default function App() {
           </div>
         )}
 
-        {/* === ABA CADASTRO DE MATERIAL === */}
+        {/* ABA CADASTRO DE MATERIAL */}
         {activeTab === 'register' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-6xl w-full">
             <div className="bg-[#121212]/80 backdrop-blur-xl border border-white/5 rounded-[2rem] p-6 shadow-xl h-fit">
@@ -1344,7 +1349,7 @@ export default function App() {
           </div>
         )}
 
-        {/* === ABA FORNECEDORES === */}
+        {/* ABA FORNECEDORES */}
         {activeTab === 'suppliers' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-6xl w-full">
             <div className="bg-[#121212]/80 backdrop-blur-xl border border-white/5 rounded-[2rem] p-6 shadow-xl h-fit">
@@ -1360,10 +1365,38 @@ export default function App() {
                 </div>
                 <div>
                   <label className="text-xs font-semibold text-gray-500 mb-2 block uppercase tracking-wider">Material de Interesse</label>
-                  <select value={newSupplierScrapCode} onChange={(e) => setNewSupplierScrapCode(e.target.value)} className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-gray-200 outline-none text-sm" required>
-                    <option value="" disabled>Selecione um material...</option>
-                    {scraps.map(s => <option key={s.code} value={s.code}>{s.name}</option>)}
-                  </select>
+                  <div className="relative">
+                    <div 
+                      onClick={() => setIsScrapDropdownOpen(!isScrapDropdownOpen)}
+                      className={`w-full bg-black/50 border ${isScrapDropdownOpen ? 'border-emerald-500/50' : 'border-white/10'} rounded-xl px-4 py-3 text-sm outline-none transition-all cursor-pointer flex justify-between items-center ${!newSupplierScrapCode ? 'text-gray-500' : 'text-gray-200'}`}
+                    >
+                      <span className="truncate">
+                        {newSupplierScrapCode ? scraps.find(s => s.code === newSupplierScrapCode)?.name : 'Selecione um material...'}
+                      </span>
+                      <ChevronDown size={16} className={`transition-transform ${isScrapDropdownOpen ? 'rotate-180 text-emerald-500' : 'text-gray-500'}`} />
+                    </div>
+
+                    {isScrapDropdownOpen && (
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={() => setIsScrapDropdownOpen(false)}></div>
+                        <div className="absolute top-full left-0 mt-2 w-full max-h-60 overflow-y-auto custom-scrollbar bg-zinc-900/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl z-50 animate-in fade-in slide-in-from-top-2">
+                          {scraps.map(s => (
+                            <div 
+                              key={s.code}
+                              onClick={() => {
+                                setNewSupplierScrapCode(s.code);
+                                setIsScrapDropdownOpen(false);
+                              }}
+                              className={`px-4 py-3 text-sm font-medium transition-colors cursor-pointer flex justify-between items-center ${newSupplierScrapCode === s.code ? 'bg-emerald-500/10 text-emerald-400' : 'text-gray-300 hover:bg-zinc-800/50'}`}
+                            >
+                              <span>{s.name}</span>
+                              <span className="text-[10px] text-gray-500 font-mono">#{s.code}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </div>
                 <div>
                   <label className="text-xs font-semibold text-gray-500 mb-2 block uppercase tracking-wider">Meta para Alerta (KG)</label>
@@ -1433,7 +1466,7 @@ export default function App() {
           </div>
         )}
 
-        {/* === ABA CONFIGURAÇÕES === */}
+        {/* ABA CONFIGURAÇÕES */}
         {activeTab === 'settings' && (
           <div className="flex flex-col max-w-5xl mx-auto w-full gap-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
             
@@ -1596,7 +1629,7 @@ export default function App() {
           </div>
         )}
 
-        {/* === ABA PAINEL ADMIN === */}
+        {/* ABA PAINEL ADMIN */}
         {activeTab === 'users' && currentUser.role === 'admin' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-6xl w-full">
             <div className="bg-[#121212]/80 backdrop-blur-xl border border-white/5 rounded-[2rem] p-6 shadow-xl h-fit relative overflow-hidden">
@@ -1703,7 +1736,7 @@ export default function App() {
           </div>
         )}
 
-        {/* === ABA CENTRAL DE AJUDA / FAQ === */}
+        {/* ABA FAQ */}
         {activeTab === 'faq' && (
           <div className="w-full max-w-4xl mx-auto flex flex-col gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="bg-[#121212]/80 backdrop-blur-xl border border-white/5 rounded-[2rem] p-8 shadow-xl relative overflow-hidden">
@@ -1746,6 +1779,7 @@ export default function App() {
 
       </main>
 
+      {/* MODAIS (Renovar Licença, Caixa, Preview Etiqueta, Cupom) */}
       {extendModalUserId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in">
           <div className="bg-[#121212] border border-white/10 text-gray-200 w-full max-w-[320px] rounded-3xl shadow-2xl flex flex-col relative overflow-hidden p-6">
@@ -1849,7 +1883,7 @@ export default function App() {
             </div>
             <div className="absolute -right-4 -bottom-16 left-0 right-0 flex gap-3 px-4 z-20">
               <button onClick={() => setReceiptTx(null)} className="flex-1 py-3 bg-zinc-800 text-white font-bold rounded-xl shadow-xl hover:bg-zinc-700 transition-colors">Fechar</button>
-              <button onClick={printReceipt} className="flex-1 py-3 bg-emerald-600 text-white font-bold rounded-xl flex justify-center items-center gap-2 shadow-xl hover:bg-emerald-500 transition-colors"><Printer size={18} /> Imprimir</button>
+              <button onClick={printReceipt} className="flex-1 py-3 bg-emerald-600 text-white font-bold rounded-xl flex justify-center items-center gap-2 shadow-xl hover:bg-emerald-50 transition-colors"><Printer size={18} /> Imprimir</button>
             </div>
           </div>
         </div>
