@@ -6,7 +6,8 @@ import {
   Home, PieChart, PackagePlus, Tag, QrCode,
   ChevronRight, ChevronDown, Usb, Wifi, MonitorSmartphone, Server,
   FileText, Users, UserPlus, Shield, Copy, Mail, Key, Power, PowerOff, X,
-  LogOut, CalendarClock, RefreshCw, Download, Info
+  LogOut, CalendarClock, RefreshCw, Download, Info,
+  Truck, MessageCircle
 } from 'lucide-react';
 
 const INITIAL_SCRAPS = [
@@ -127,9 +128,6 @@ export default function App() {
 
   const [isScaleDropdownOpen, setIsScaleDropdownOpen] = useState(false);
 
-  const currentScale = scales.find(s => s.id === activeScaleId);
-  const scaleConnected = currentScale?.isConnected || false;
-
   const [usersList, setUsersList] = useState(INITIAL_USERS);
   const [userSearchTerm, setUserSearchTerm] = useState('');
   
@@ -158,6 +156,13 @@ export default function App() {
   const [isInventoryListOpen, setIsInventoryListOpen] = useState(false);
   const [receiptTx, setReceiptTx] = useState(null);
   const [labelPreview, setLabelPreview] = useState(null);
+
+  // === NOVO ESTADO: FORNECEDORES ===
+  const [suppliers, setSuppliers] = useState([]);
+  const [newSupplierName, setNewSupplierName] = useState('');
+  const [newSupplierPhone, setNewSupplierPhone] = useState('');
+  const [newSupplierScrapCode, setNewSupplierScrapCode] = useState('');
+  const [newSupplierTargetKg, setNewSupplierTargetKg] = useState('');
 
   useEffect(() => {
     let isMounted = true;
@@ -215,6 +220,7 @@ export default function App() {
       const loadedInitialCash = await loadData(`${userKey}_initialCash`, 5000);
       const loadedScales = await loadData(`${userKey}_scales`, INITIAL_SCALE);
       const loadedPrinters = await loadData(`${userKey}_printers`, INITIAL_PRINTERS);
+      const loadedSuppliers = await loadData(`${userKey}_suppliers`, []); // Carrega Fornecedores
 
       if (!isMounted) return;
 
@@ -224,6 +230,7 @@ export default function App() {
       setTempCash(typeof loadedInitialCash === 'number' ? loadedInitialCash : 5000);
       setScales(Array.isArray(loadedScales) ? loadedScales : INITIAL_SCALE);
       setPrinters(Array.isArray(loadedPrinters) ? loadedPrinters : INITIAL_PRINTERS);
+      setSuppliers(Array.isArray(loadedSuppliers) ? loadedSuppliers : []);
 
       const safeScales = Array.isArray(loadedScales) ? loadedScales : INITIAL_SCALE;
       setActiveScaleId(safeScales[0]?.id || 'sc_1');
@@ -262,16 +269,35 @@ export default function App() {
   }, [printers, currentUser]);
 
   useEffect(() => {
-    if (window.electronAPI && window.electronAPI.onUpdateAvailable) {
-      const removeListener = window.electronAPI.onUpdateAvailable(() => {
-        setUpdateAvailable(true);
-      });
+    if (currentUser) saveData(`${currentUser.id}_suppliers`, suppliers);
+  }, [suppliers, currentUser]);
 
-      return () => {
-        if (typeof removeListener === 'function') {
-          removeListener();
-        }
-      };
+  useEffect(() => {
+    if (window.electronAPI) {
+      if (window.electronAPI.onUpdateAvailable) {
+        window.electronAPI.onUpdateAvailable(() => {
+          setUpdateAvailable(true);
+          setIsCheckingUpdate(false);
+        });
+      }
+      if (window.electronAPI.onUpdateFound) {
+        window.electronAPI.onUpdateFound(() => {
+          showToast("Nova versão encontrada! A transferir em segundo plano...");
+        });
+      }
+      if (window.electronAPI.onUpdateNotFound) {
+        window.electronAPI.onUpdateNotFound(() => {
+          setIsCheckingUpdate(false);
+          showToast("O sistema já está na versão mais recente.");
+        });
+      }
+      if (window.electronAPI.onUpdateError) {
+        window.electronAPI.onUpdateError((err) => {
+          setIsCheckingUpdate(false);
+          showToast("Erro ao ligar ao servidor de atualizações.");
+          console.error(err);
+        });
+      }
     }
   }, []);
 
@@ -289,26 +315,15 @@ export default function App() {
     }
   };
 
-  const handleCheckForUpdates = async () => {
+  const handleCheckForUpdates = () => {
     setIsCheckingUpdate(true);
-
-    try {
-      if (window.electronAPI && window.electronAPI.checkForUpdates) {
-        const result = await window.electronAPI.checkForUpdates();
-
-        if (result?.ok === false) {
-          showToast(result.message || "Não foi possível verificar atualizações.");
-        } else {
-          showToast("Verificação enviada ao servidor.");
-        }
-      } else {
-        showToast("Simulação: O sistema já está na versão mais recente.");
-      }
-    } catch (error) {
-      console.error("Erro ao verificar atualizações:", error);
-      showToast("Erro ao verificar atualizações.");
-    } finally {
-      setIsCheckingUpdate(false);
+    if (window.electronAPI && window.electronAPI.checkForUpdates) {
+      window.electronAPI.checkForUpdates();
+    } else {
+      setTimeout(() => {
+        setIsCheckingUpdate(false);
+        showToast("Simulação: Não é possível buscar web no modo de testes.");
+      }, 2000);
     }
   };
 
@@ -377,6 +392,44 @@ export default function App() {
     setConfirmPasswordInput('');
     showToast("Senha alterada com sucesso!");
   };
+
+  // === FUNÇÕES DE FORNECEDORES ===
+  const handleAddSupplier = (e) => {
+    e.preventDefault();
+    if (!newSupplierName || !newSupplierPhone || !newSupplierScrapCode || !newSupplierTargetKg) return;
+
+    const scrapRef = scraps.find(s => s.code === newSupplierScrapCode);
+    if (!scrapRef) return;
+
+    const newSupplier = {
+      id: Math.random().toString(36).substr(2, 9),
+      name: newSupplierName,
+      phone: newSupplierPhone.replace(/\D/g, ''), // Limpa máscara
+      scrapCode: scrapRef.code,
+      scrapName: scrapRef.name,
+      targetKg: parseFloat(newSupplierTargetKg)
+    };
+
+    setSuppliers([...suppliers, newSupplier]);
+    setNewSupplierName('');
+    setNewSupplierPhone('');
+    setNewSupplierScrapCode('');
+    setNewSupplierTargetKg('');
+    showToast("Fornecedor registado com sucesso.");
+  };
+
+  const handleDeleteSupplier = (id) => {
+    setSuppliers(suppliers.filter(s => s.id !== id));
+    showToast("Fornecedor removido.");
+  };
+
+  const sendWhatsAppMessage = (supplier, currentInventoryKg) => {
+    const message = `Olá ${supplier.name}, o ScrapSys informa que já temos ${currentInventoryKg.toFixed(1)}kg de ${supplier.scrapName} separados em estoque para a sua coleta.`;
+    const url = `https://wa.me/${supplier.phone}?text=${encodeURIComponent(message)}`;
+    
+    window.open(url, '_blank');
+  };
+  // ==================================
 
   const handleSearchHardware = async () => {
     setIsSearchingDevice(true);
@@ -706,7 +759,8 @@ export default function App() {
       totalSpent,
       currentCash: initialCash - totalSpent,
       totalWeightTon: (totalWeightKG / 1000).toFixed(3),
-      inventoryByCategory: Object.values(inventoryMap).sort((a, b) => b.weight - a.weight)
+      inventoryByCategory: Object.values(inventoryMap).sort((a, b) => b.weight - a.weight),
+      inventoryMap 
     };
   }, [transactions, initialCash, currentUser]);
 
@@ -895,10 +949,11 @@ export default function App() {
     setReceiptTx(null);
   };
 
+  // Blindagem contra quebra da lista de utilizadores na hora da busca
   const filteredUsers = usersList.filter(u => 
-    u.name.toLowerCase().includes(userSearchTerm.toLowerCase()) || 
-    u.login.includes(userSearchTerm) || 
-    u.cpf.includes(userSearchTerm)
+    (u.name || '').toLowerCase().includes(userSearchTerm.toLowerCase()) || 
+    (u.login || '').includes(userSearchTerm) || 
+    (u.cpf || '').includes(userSearchTerm)
   );
 
   if (!currentUser) {
@@ -976,26 +1031,29 @@ export default function App() {
           </div>
         </div>
 
-        <div className="flex bg-black/40 rounded-xl p-1 border border-white/5 gap-1">
-          <button onClick={() => setActiveTab('home')} title="Pesagem Rápida" className={`p-3 rounded-lg transition-all ${activeTab === 'home' ? 'bg-zinc-800 text-emerald-400 shadow-md border border-white/10' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}><Home size={22} /></button>
-          <button onClick={() => setActiveTab('finance')} title="Financeiro" className={`p-3 rounded-lg transition-all ${activeTab === 'finance' ? 'bg-zinc-800 text-emerald-400 shadow-md border border-white/10' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}><PieChart size={22} /></button>
-          <button onClick={() => setActiveTab('register')} title="Cadastro de Material" className={`p-3 rounded-lg transition-all ${activeTab === 'register' ? 'bg-zinc-800 text-emerald-400 shadow-md border border-white/10' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}><PackagePlus size={22} /></button>
-          <button onClick={() => setActiveTab('settings')} title="Configurações" className={`p-3 rounded-lg transition-all ${activeTab === 'settings' ? 'bg-zinc-800 text-emerald-400 shadow-md border border-white/10' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}><Settings size={22} /></button>
+        <div className="flex bg-black/40 rounded-xl p-1 border border-white/5 gap-1 overflow-x-auto custom-scrollbar">
+          <button onClick={() => setActiveTab('home')} title="Pesagem Rápida" className={`p-3 shrink-0 rounded-lg transition-all ${activeTab === 'home' ? 'bg-zinc-800 text-emerald-400 shadow-md border border-white/10' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}><Home size={22} /></button>
+          <button onClick={() => setActiveTab('finance')} title="Financeiro" className={`p-3 shrink-0 rounded-lg transition-all ${activeTab === 'finance' ? 'bg-zinc-800 text-emerald-400 shadow-md border border-white/10' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}><PieChart size={22} /></button>
+          <button onClick={() => setActiveTab('register')} title="Cadastro de Material" className={`p-3 shrink-0 rounded-lg transition-all ${activeTab === 'register' ? 'bg-zinc-800 text-emerald-400 shadow-md border border-white/10' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}><PackagePlus size={22} /></button>
+          <button onClick={() => setActiveTab('suppliers')} title="Fornecedores (Compradores)" className={`p-3 shrink-0 rounded-lg transition-all ${activeTab === 'suppliers' ? 'bg-zinc-800 text-emerald-400 shadow-md border border-white/10' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}><Truck size={22} /></button>
+          <button onClick={() => setActiveTab('settings')} title="Configurações" className={`p-3 shrink-0 rounded-lg transition-all ${activeTab === 'settings' ? 'bg-zinc-800 text-emerald-400 shadow-md border border-white/10' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}><Settings size={22} /></button>
           
           {currentUser.role === 'admin' && (
             <>
-              <div className="w-px h-8 bg-white/10 my-auto mx-1"></div>
-              <button onClick={() => setActiveTab('users')} title="Painel Admin" className={`p-3 rounded-lg transition-all ${activeTab === 'users' ? 'bg-zinc-800 text-indigo-400 shadow-md border border-white/10' : 'text-indigo-500/50 hover:text-indigo-400 hover:bg-white/5'}`}><Shield size={22} /></button>
+              <div className="w-px h-8 bg-white/10 my-auto mx-1 shrink-0"></div>
+              <button onClick={() => setActiveTab('users')} title="Painel Admin" className={`p-3 shrink-0 rounded-lg transition-all ${activeTab === 'users' ? 'bg-zinc-800 text-indigo-400 shadow-md border border-white/10' : 'text-indigo-500/50 hover:text-indigo-400 hover:bg-white/5'}`}><Shield size={22} /></button>
             </>
           )}
           
-          <div className="w-px h-8 bg-white/10 my-auto mx-1"></div>
-          <button onClick={handleLogout} title="Sair do Sistema" className="p-3 rounded-lg transition-all text-red-500/50 hover:text-red-400 hover:bg-white/5"><LogOut size={22} /></button>
+          <div className="w-px h-8 bg-white/10 my-auto mx-1 shrink-0"></div>
+          <button onClick={() => setActiveTab('faq')} title="Central de Ajuda" className={`p-3 shrink-0 rounded-lg transition-all ${activeTab === 'faq' ? 'bg-zinc-800 text-emerald-400 shadow-md border border-white/10' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}><Info size={22} /></button>
+          <button onClick={handleLogout} title="Sair do Sistema" className="p-3 shrink-0 rounded-lg transition-all text-red-500/50 hover:text-red-400 hover:bg-white/5"><LogOut size={22} /></button>
         </div>
       </header>
 
       <main className="flex-1 w-full flex flex-col items-center z-10 pb-10">
         
+        {/* === ABA HOME === */}
         {activeTab === 'home' && (
           <div className="w-full flex justify-center animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className={`flex flex-col lg:flex-row gap-6 items-start transition-all duration-500 w-full ${isPriceListOpen ? 'max-w-5xl' : 'max-w-3xl'}`}>
@@ -1157,6 +1215,7 @@ export default function App() {
           </div>
         )}
 
+        {/* === ABA FINANCEIRO === */}
         {activeTab === 'finance' && (
           <div className="w-full flex justify-center animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className={`flex flex-col lg:flex-row gap-6 items-start transition-all duration-500 w-full ${isInventoryListOpen ? 'max-w-[85rem]' : 'max-w-6xl'}`}>
@@ -1234,6 +1293,7 @@ export default function App() {
           </div>
         )}
 
+        {/* === ABA CADASTRO DE MATERIAL === */}
         {activeTab === 'register' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-6xl w-full">
             <div className="bg-[#121212]/80 backdrop-blur-xl border border-white/5 rounded-[2rem] p-6 shadow-xl h-fit">
@@ -1284,6 +1344,96 @@ export default function App() {
           </div>
         )}
 
+        {/* === ABA FORNECEDORES === */}
+        {activeTab === 'suppliers' && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-6xl w-full">
+            <div className="bg-[#121212]/80 backdrop-blur-xl border border-white/5 rounded-[2rem] p-6 shadow-xl h-fit">
+              <h2 className="text-sm font-bold mb-6 flex items-center gap-2 text-gray-300 uppercase tracking-widest border-b border-white/5 pb-4"><Truck size={16} className="text-emerald-500" /> Novo Comprador</h2>
+              <form onSubmit={handleAddSupplier} className="flex flex-col gap-5">
+                <div>
+                  <label className="text-xs font-semibold text-gray-500 mb-2 block uppercase tracking-wider">Nome da Empresa</label>
+                  <input type="text" value={newSupplierName} onChange={(e) => setNewSupplierName(e.target.value)} placeholder="Ex: Gerdau S.A." className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-gray-200 outline-none text-sm" required/>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-gray-500 mb-2 block uppercase tracking-wider">WhatsApp c/ DDD</label>
+                  <input type="text" value={newSupplierPhone} onChange={(e) => setNewSupplierPhone(e.target.value)} placeholder="Ex: 11999999999" className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-gray-200 outline-none text-sm" required/>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-gray-500 mb-2 block uppercase tracking-wider">Material de Interesse</label>
+                  <select value={newSupplierScrapCode} onChange={(e) => setNewSupplierScrapCode(e.target.value)} className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-gray-200 outline-none text-sm" required>
+                    <option value="" disabled>Selecione um material...</option>
+                    {scraps.map(s => <option key={s.code} value={s.code}>{s.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-gray-500 mb-2 block uppercase tracking-wider">Meta para Alerta (KG)</label>
+                  <div className="relative">
+                    <input type="number" step="0.1" value={newSupplierTargetKg} onChange={(e) => setNewSupplierTargetKg(e.target.value)} placeholder="Ex: 2000" className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-gray-200 outline-none text-sm" required/>
+                    <span className="absolute right-4 top-[14px] text-gray-600 text-sm font-bold">KG</span>
+                  </div>
+                </div>
+                <button type="submit" className="w-full mt-2 py-3.5 bg-zinc-800 hover:bg-zinc-700 text-gray-200 rounded-xl font-bold text-sm shadow-lg transition-all border border-white/10">Cadastrar Fornecedor</button>
+              </form>
+            </div>
+
+            <div className="lg:col-span-2 bg-[#121212]/80 backdrop-blur-xl border border-white/5 rounded-[2rem] p-6 flex flex-col h-[600px] shadow-xl">
+              <div className="flex justify-between items-center mb-6 border-b border-white/5 pb-4">
+                <h2 className="text-sm font-bold flex items-center gap-2 text-gray-300 uppercase tracking-widest"><MessageCircle className="text-emerald-500" size={16} /> Controlo de Metas e Alertas</h2>
+              </div>
+              <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
+                {suppliers.length === 0 ? (
+                  <p className="text-sm text-gray-500 text-center mt-10">Nenhum comprador cadastrado para gerar alertas.</p>
+                ) : (
+                  <div className="grid grid-cols-1 gap-4">
+                    {suppliers.map((s) => {
+                      const inv = stats.inventoryMap[s.scrapCode];
+                      const currentWeight = inv ? inv.weight : 0;
+                      const progress = Math.min((currentWeight / s.targetKg) * 100, 100);
+                      const isReady = currentWeight >= s.targetKg;
+
+                      return (
+                        <div key={s.id} className="bg-black/40 border border-white/5 rounded-2xl p-5 flex flex-col sm:flex-row items-center justify-between group hover:bg-zinc-900/80 transition-all gap-4">
+                          <div className="flex-1 w-full">
+                            <div className="flex justify-between items-start mb-2">
+                              <div>
+                                <p className="font-bold text-gray-200 text-lg">{s.name}</p>
+                                <p className="text-xs font-semibold text-gray-500 mt-0.5 uppercase tracking-widest flex items-center gap-1.5"><Truck size={12}/> {s.scrapName}</p>
+                              </div>
+                              <button onClick={() => handleDeleteSupplier(s.id)} className="p-2 text-red-500/30 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all"><Trash2 size={16} /></button>
+                            </div>
+                            
+                            <div className="mt-4">
+                              <div className="flex justify-between text-[10px] font-bold text-gray-500 mb-1 uppercase tracking-widest">
+                                <span>{currentWeight.toFixed(1)} KG em Estoque</span>
+                                <span>Meta: {s.targetKg} KG</span>
+                              </div>
+                              <div className="w-full bg-white/5 rounded-full h-2 overflow-hidden">
+                                <div className={`h-full rounded-full transition-all duration-1000 ${isReady ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]' : 'bg-gray-500'}`} style={{ width: `${progress}%` }}></div>
+                              </div>
+                            </div>
+                          </div>
+                          
+                          <div className="sm:ml-4 w-full sm:w-auto shrink-0 border-t sm:border-t-0 sm:border-l border-white/5 pt-4 sm:pt-0 sm:pl-4 flex flex-col justify-center">
+                            <button 
+                              onClick={() => sendWhatsAppMessage(s, currentWeight)}
+                              disabled={!isReady}
+                              className={`w-full sm:w-32 py-3 rounded-xl font-bold text-xs transition-all flex flex-col items-center justify-center gap-1.5 border ${isReady ? 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-500/50 shadow-lg shadow-emerald-900/50' : 'bg-zinc-800 text-gray-500 border-white/5 opacity-50 cursor-not-allowed'}`}
+                            >
+                              <MessageCircle size={18} />
+                              {isReady ? 'Avisar Coleta' : 'Aguardar'}
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* === ABA CONFIGURAÇÕES === */}
         {activeTab === 'settings' && (
           <div className="flex flex-col max-w-5xl mx-auto w-full gap-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
             
@@ -1446,6 +1596,7 @@ export default function App() {
           </div>
         )}
 
+        {/* === ABA PAINEL ADMIN === */}
         {activeTab === 'users' && currentUser.role === 'admin' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-6xl w-full">
             <div className="bg-[#121212]/80 backdrop-blur-xl border border-white/5 rounded-[2rem] p-6 shadow-xl h-fit relative overflow-hidden">
@@ -1548,6 +1699,47 @@ export default function App() {
                 </div>
               </div>
 
+            </div>
+          </div>
+        )}
+
+        {/* === ABA CENTRAL DE AJUDA / FAQ === */}
+        {activeTab === 'faq' && (
+          <div className="w-full max-w-4xl mx-auto flex flex-col gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div className="bg-[#121212]/80 backdrop-blur-xl border border-white/5 rounded-[2rem] p-8 shadow-xl relative overflow-hidden">
+              <div className="absolute -top-32 -right-32 w-64 h-64 bg-emerald-900 rounded-full mix-blend-multiply filter blur-[100px] opacity-10"></div>
+              
+              <div className="flex items-center gap-4 mb-8 border-b border-white/5 pb-6">
+                <div className="bg-emerald-500/10 p-3 rounded-xl border border-emerald-500/20 text-emerald-500">
+                  <Info size={28} />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold text-gray-200">Central de Ajuda</h2>
+                  <p className="text-xs text-gray-500 mt-1 uppercase tracking-widest">Perguntas Frequentes e Suporte</p>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="bg-black/40 border border-white/5 rounded-2xl p-5 hover:bg-zinc-900/50 transition-colors">
+                  <h3 className="font-bold text-gray-200 mb-2 flex items-center gap-2"><Scale size={16} className="text-emerald-500"/> Como conecto a balança ao sistema?</h3>
+                  <p className="text-sm text-gray-400 leading-relaxed">Vá até à aba <strong>Configurações</strong> e procure a secção "Gestão de Balanças". Selecione o tipo de ligação (Bluetooth, USB ou Rede IP) e clique em "Buscar Dispositivo". Após o sistema detetar, clique em "Salvar".</p>
+                </div>
+                
+                <div className="bg-black/40 border border-white/5 rounded-2xl p-5 hover:bg-zinc-900/50 transition-colors">
+                  <h3 className="font-bold text-gray-200 mb-2 flex items-center gap-2"><Wallet size={16} className="text-emerald-500"/> Onde posso fazer Suprimento ou Sangria do Caixa?</h3>
+                  <p className="text-sm text-gray-400 leading-relaxed">Aceda à aba <strong>Financeiro</strong>. No primeiro quadro verde (Caixa Atual Disponível), existe um ícone de lápis no canto superior direito. Ao clicar, o sistema abrirá um painel seguro para Adicionar (Suprimento) ou Retirar (Sangria) valores do seu caixa diário.</p>
+                </div>
+
+                <div className="bg-black/40 border border-white/5 rounded-2xl p-5 hover:bg-zinc-900/50 transition-colors">
+                  <h3 className="font-bold text-gray-200 mb-2 flex items-center gap-2"><Truck size={16} className="text-emerald-500"/> Como funcionam os alertas de WhatsApp?</h3>
+                  <p className="text-sm text-gray-400 leading-relaxed">Na aba <strong>Fornecedores</strong>, pode cadastrar os compradores finais e o peso-meta que eles compram de cada material (Ex: 2.000kg de Cobre). O sistema monitoriza o seu inventário na aba Financeiro e, assim que esse peso for atingido, o botão "Avisar Coleta" ficará verde, pronto a enviar a notificação no WhatsApp.</p>
+                </div>
+
+                <div className="bg-black/40 border border-white/5 rounded-2xl p-5 hover:bg-zinc-900/50 transition-colors">
+                  <h3 className="font-bold text-gray-200 mb-2 flex items-center gap-2"><Download size={16} className="text-emerald-500"/> O sistema funciona sem Internet?</h3>
+                  <p className="text-sm text-gray-400 leading-relaxed">Sim! O ScrapSys é 100% offline. Todos os seus dados, clientes e transações ficam gravados fisicamente e com segurança no seu computador. A Internet é solicitada apenas se desejar clicar no botão "Procurar Atualizações" para instalar novas funcionalidades ou gerar o alerta de WhatsApp Web.</p>
+                </div>
+              </div>
             </div>
           </div>
         )}
