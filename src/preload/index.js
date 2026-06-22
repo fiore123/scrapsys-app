@@ -9,6 +9,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   importData: (data) => ipcRenderer.invoke('import-data', data),
 
+  getSyncServerInfo: () => ipcRenderer.invoke('get-sync-server-info'),
+
+  onSyncDataChanged: (callback) => {
+    const listener = () => callback()
+    ipcRenderer.on('sync_data_changed', listener)
+    return () => ipcRenderer.removeListener('sync_data_changed', listener)
+  },
+
   getVersion: () => ipcRenderer.invoke('get-version'),
 
   onUpdateAvailable: (callback) => {

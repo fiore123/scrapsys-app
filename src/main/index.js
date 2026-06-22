@@ -1,6 +1,9 @@
 import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import fs from 'fs'
+import http from 'http'
+import os from 'os'
+import crypto from 'crypto'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { autoUpdater } from 'electron-updater'
@@ -8,6 +11,49 @@ import { autoUpdater } from 'electron-updater'
 app.setName('ScrapSys')
 
 const dbPath = join(app.getPath('userData'), 'scrapsys_database.json')
+const syncMetaPath = join(app.getPath('userData'), 'scrapsys_sync_meta.json')
+const syncConfigPath = join(app.getPath('userData'), 'scrapsys_sync_config.json')
+const syncPort = 38947
+
+function loadJsonFile(filePath, fallback = {}) {
+  try {
+    if (fs.existsSync(filePath)) return JSON.parse(fs.readFileSync(filePath, 'utf8'))
+  } catch (error) {
+    console.error(`Erro ao ler ${filePath}:`, error)
+  }
+  return fallback
+}
+
+function saveJsonFile(filePath, data) {
+  fs.mkdirSync(app.getPath('userData'), { recursive: true })
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8')
+}
+
+function loadSyncMeta() {
+  return loadJsonFile(syncMetaPath)
+}
+
+function touchSyncKey(key) {
+  const meta = loadSyncMeta()
+  meta[key] = Date.now()
+  saveJsonFile(syncMetaPath, meta)
+}
+
+function getSyncConfig() {
+  const saved = loadJsonFile(syncConfigPath, null)
+  if (saved?.pairingCode) return saved
+
+  const config = { pairingCode: crypto.randomInt(100000, 999999).toString() }
+  saveJsonFile(syncConfigPath, config)
+  return config
+}
+
+function getLocalAddresses() {
+  return Object.values(os.networkInterfaces())
+    .flat()
+    .filter((item) => item && item.family === 'IPv4' && !item.internal)
+    .map((item) => `http://${item.address}:${syncPort}`)
+}
 
 function loadDatabase() {
   try {
@@ -29,6 +75,7 @@ function saveToDatabase(key, data) {
 
     fs.mkdirSync(app.getPath('userData'), { recursive: true })
     fs.writeFileSync(dbPath, JSON.stringify(db, null, 2), 'utf8')
+    touchSyncKey(key)
 
     return true
   } catch (error) {
@@ -37,7 +84,84 @@ function saveToDatabase(key, data) {
   }
 }
 
-function replaceDatabase(data) {
+function startSyncServer() {
+  const server = http.createServer((request, response) => {
+    response.setHeader('Access-Control-Allow-Origin', '*')
+    response.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-ScrapSys-Code')
+    response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+    response.setHeader('Access-Control-Allow-Private-Network', 'true')
+    response.setHeader('Content-Type', 'application/json; charset=utf-8')
+
+    if (request.method === 'OPTIONS') {
+      response.writeHead(204)
+      response.end()
+      return
+    }
+
+    if (request.headers['x-scrapsys-code'] !== getSyncConfig().pairingCode) {
+      response.writeHead(401)
+      response.end(JSON.stringify({ ok: false, message: 'Codigo de pareamento invalido.' }))
+      return
+    }
+
+    if (request.method === 'GET' && request.url === '/health') {
+      response.end(JSON.stringify({ ok: true, device: os.hostname() }))
+      return
+    }
+
+    if (request.method !== 'POST' || request.url !== '/sync') {
+      response.writeHead(404)
+      response.end(JSON.stringify({ ok: false }))
+      return
+    }
+
+    let body = ''
+    request.on('data', (chunk) => {
+      body += chunk
+      if (body.length > 5 * 1024 * 1024) request.destroy()
+    })
+    request.on('end', () => {
+      try {
+        const incoming = JSON.parse(body || '{}')
+        const incomingData = incoming.data && typeof incoming.data === 'object' ? incoming.data : {}
+        const incomingMeta = incoming.meta && typeof incoming.meta === 'object' ? incoming.meta : {}
+        const database = loadDatabase()
+        const meta = loadSyncMeta()
+        let changedByRemote = false
+
+        Object.entries(incomingData).forEach(([key, value]) => {
+          if (key.startsWith('__scrapsys_')) return
+          const incomingTimestamp = Number(incomingMeta[key] || 0)
+          const serverTimestamp = Number(meta[key] || 0)
+          if (incomingTimestamp > serverTimestamp) {
+            database[key] = value
+            meta[key] = incomingTimestamp
+            changedByRemote = true
+          }
+        })
+
+        if (changedByRemote) {
+          replaceDatabase(database, false)
+          saveJsonFile(syncMetaPath, meta)
+          BrowserWindow.getAllWindows().forEach((window) => {
+            window.webContents.send('sync_data_changed')
+          })
+        }
+
+        response.end(JSON.stringify({ ok: true, data: database, meta }))
+      } catch (error) {
+        console.error('Erro na sincronizacao local:', error)
+        response.writeHead(400)
+        response.end(JSON.stringify({ ok: false, message: 'Dados de sincronizacao invalidos.' }))
+      }
+    })
+  })
+
+  server.on('error', (error) => console.error('Servidor de sincronizacao:', error))
+  server.listen(syncPort, '0.0.0.0')
+}
+
+function replaceDatabase(data, updateSyncMeta = true) {
   try {
     if (!data || typeof data !== 'object' || Array.isArray(data)) return false
 
@@ -45,6 +169,13 @@ function replaceDatabase(data) {
     const temporaryPath = `${dbPath}.tmp`
     fs.writeFileSync(temporaryPath, JSON.stringify(data, null, 2), 'utf8')
     fs.renameSync(temporaryPath, dbPath)
+    if (updateSyncMeta) {
+      const timestamp = Date.now()
+      saveJsonFile(
+        syncMetaPath,
+        Object.fromEntries(Object.keys(data).map((key) => [key, timestamp]))
+      )
+    }
     return true
   } catch (error) {
     console.error('Erro ao importar banco de dados:', error)
@@ -54,6 +185,7 @@ function replaceDatabase(data) {
 
 function createWindow() {
   const mainWindow = new BrowserWindow({
+    icon,
     width: 900,
     height: 670,
     show: false,
@@ -121,6 +253,12 @@ app.whenReady().then(() => {
 
   ipcMain.handle('import-data', async (_, data) => replaceDatabase(data))
 
+  ipcMain.handle('get-sync-server-info', async () => ({
+    pairingCode: getSyncConfig().pairingCode,
+    addresses: getLocalAddresses(),
+    port: syncPort
+  }))
+
   ipcMain.handle('get-version', async () => {
     return app.getVersion()
   })
@@ -186,6 +324,7 @@ app.whenReady().then(() => {
   })
 
   createWindow()
+  startSyncServer()
 
   if (!is.dev) {
     autoUpdater.checkForUpdatesAndNotify().catch((error) => {

@@ -11,10 +11,13 @@ import {
 } from 'lucide-react';
 import {
   getNativeAppVersion,
+  getAutomaticSyncSettings,
   exportBackup,
   importBackup,
   isNativeMobile,
   loadLocalData,
+  runAutomaticSync,
+  saveAutomaticSyncSettings,
   saveLocalData,
   tapFeedback
 } from './platform';
@@ -145,6 +148,8 @@ export default function App() {
   const scaleConnected = currentScale?.isConnected || false;
 
   const [usersList, setUsersList] = useState(INITIAL_USERS);
+  const [usersLoaded, setUsersLoaded] = useState(false);
+  const [loadedUserId, setLoadedUserId] = useState(null);
   const [userSearchTerm, setUserSearchTerm] = useState('');
   
   const [newUserCpf, setNewUserCpf] = useState('');
@@ -163,6 +168,10 @@ export default function App() {
   const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [isSyncingData, setIsSyncingData] = useState(false);
+  const [automaticSync, setAutomaticSync] = useState({ enabled: false, serverUrl: '', pairingCode: '' });
+  const [syncServerInfo, setSyncServerInfo] = useState(null);
+  const [automaticSyncStatus, setAutomaticSyncStatus] = useState('idle');
+  const syncReloadingRef = useRef(false);
 
   const [appVersion, setAppVersion] = useState('1.0.X');
 
@@ -197,6 +206,7 @@ export default function App() {
       } else {
         setUsersList(safeUsers);
       }
+      setUsersLoaded(true);
     };
 
     loadUsers();
@@ -207,8 +217,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    saveData('global_usersList', usersList);
-  }, [usersList]);
+    if (usersLoaded) saveData('global_usersList', usersList);
+  }, [usersList, usersLoaded]);
 
   useEffect(() => {
     const loadVersion = async () => {
@@ -217,7 +227,7 @@ export default function App() {
           const version = await window.electronAPI.getVersion();
           setAppVersion(version);
         } else {
-          setAppVersion(await getNativeAppVersion('1.2.4'));
+          setAppVersion(await getNativeAppVersion('1.2.5'));
         }
       } catch (error) {
         console.error('Erro ao obter versão:', error);
@@ -228,9 +238,59 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (isNativeMobile) {
+      getAutomaticSyncSettings().then((settings) => {
+        if (settings) setAutomaticSync(settings);
+      });
+      return;
+    }
+
+    window.electronAPI?.getSyncServerInfo?.().then(setSyncServerInfo);
+  }, []);
+
+  useEffect(() => {
+    if (!isNativeMobile || !automaticSync.enabled) return;
+
+    let active = true;
+    const synchronize = async () => {
+      try {
+        const result = await runAutomaticSync(automaticSync);
+        if (!active) return;
+        setAutomaticSyncStatus(result.ok ? 'connected' : 'idle');
+        if (result.changed && !syncReloadingRef.current) {
+          syncReloadingRef.current = true;
+          showToast('Dados recebidos do PC. Atualizando...');
+          setTimeout(() => window.location.reload(), 600);
+        }
+      } catch (error) {
+        if (active) setAutomaticSyncStatus('offline');
+        console.warn('PC de sincronizacao indisponivel:', error);
+      }
+    };
+
+    synchronize();
+    const interval = setInterval(synchronize, 4000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [automaticSync]);
+
+  useEffect(() => {
+    if (!window.electronAPI?.onSyncDataChanged) return;
+    return window.electronAPI.onSyncDataChanged(() => {
+      if (syncReloadingRef.current) return;
+      syncReloadingRef.current = true;
+      showToast('Dados recebidos do celular. Atualizando...');
+      setTimeout(() => window.location.reload(), 600);
+    });
+  }, []);
+
+  useEffect(() => {
     if (!currentUser) return;
 
     let isMounted = true;
+    setLoadedUserId(null);
 
     const loadUserData = async () => {
       const userKey = currentUser.id;
@@ -259,6 +319,7 @@ export default function App() {
       setCode('');
       setSelectedScrap(null);
       setCurrentItems([]);
+      setLoadedUserId(currentUser.id);
     };
 
     loadUserData();
@@ -269,29 +330,29 @@ export default function App() {
   }, [currentUser]);
 
   useEffect(() => {
-    if (currentUser) saveData(`${currentUser.id}_scraps`, scraps);
-  }, [scraps, currentUser]);
+    if (currentUser && loadedUserId === currentUser.id) saveData(`${currentUser.id}_scraps`, scraps);
+  }, [scraps, currentUser, loadedUserId]);
 
   useEffect(() => {
-    if (currentUser) saveData(`${currentUser.id}_transactions`, transactions);
-  }, [transactions, currentUser]);
+    if (currentUser && loadedUserId === currentUser.id) saveData(`${currentUser.id}_transactions`, transactions);
+  }, [transactions, currentUser, loadedUserId]);
 
   useEffect(() => {
-    if (currentUser) saveData(`${currentUser.id}_initialCash`, initialCash);
-  }, [initialCash, currentUser]);
+    if (currentUser && loadedUserId === currentUser.id) saveData(`${currentUser.id}_initialCash`, initialCash);
+  }, [initialCash, currentUser, loadedUserId]);
 
   useEffect(() => {
-    if (currentUser) saveData(`${currentUser.id}_scales`, scales);
-  }, [scales, currentUser]);
+    if (currentUser && loadedUserId === currentUser.id) saveData(`${currentUser.id}_scales`, scales);
+  }, [scales, currentUser, loadedUserId]);
 
   useEffect(() => {
-    if (currentUser) saveData(`${currentUser.id}_printers`, printers);
-  }, [printers, currentUser]);
+    if (currentUser && loadedUserId === currentUser.id) saveData(`${currentUser.id}_printers`, printers);
+  }, [printers, currentUser, loadedUserId]);
 
   // Salvar fornecedores no banco de dados local
   useEffect(() => {
-    if (currentUser) saveData(`${currentUser.id}_suppliers`, suppliers);
-  }, [suppliers, currentUser]);
+    if (currentUser && loadedUserId === currentUser.id) saveData(`${currentUser.id}_suppliers`, suppliers);
+  }, [suppliers, currentUser, loadedUserId]);
 
   useEffect(() => {
     if (window.electronAPI && window.electronAPI.onUpdateAvailable) {
@@ -366,6 +427,45 @@ export default function App() {
     } finally {
       setIsSyncingData(false);
     }
+  };
+
+  const handleEnableAutomaticSync = async () => {
+    const settings = {
+      ...automaticSync,
+      enabled: true,
+      serverUrl: automaticSync.serverUrl.trim().replace(/\/$/, ''),
+      pairingCode: automaticSync.pairingCode.trim()
+    };
+
+    if (!/^https?:\/\//i.test(settings.serverUrl) || settings.pairingCode.length !== 6) {
+      showToast('Informe o endereco do PC e o codigo de 6 digitos.');
+      return;
+    }
+
+    setIsSyncingData(true);
+    setAutomaticSyncStatus('connecting');
+    try {
+      await saveAutomaticSyncSettings(settings);
+      const result = await runAutomaticSync(settings);
+      setAutomaticSync(settings);
+      setAutomaticSyncStatus('connected');
+      showToast('Sincronizacao automatica conectada.');
+      if (result.changed) setTimeout(() => window.location.reload(), 600);
+    } catch (error) {
+      console.error('Erro ao parear com o PC:', error);
+      setAutomaticSyncStatus('offline');
+      showToast('Nao foi possivel conectar. Confira Wi-Fi, endereco e codigo.');
+    } finally {
+      setIsSyncingData(false);
+    }
+  };
+
+  const handleDisableAutomaticSync = async () => {
+    const settings = { ...automaticSync, enabled: false };
+    await saveAutomaticSyncSettings(settings);
+    setAutomaticSync(settings);
+    setAutomaticSyncStatus('idle');
+    showToast('Sincronizacao automatica desativada.');
   };
 
   const handleImportBackup = async (event) => {
@@ -1717,9 +1817,54 @@ export default function App() {
               <div className="absolute -top-32 -right-32 w-64 h-64 bg-emerald-900 rounded-full mix-blend-multiply filter blur-[100px] opacity-10"></div>
               <h2 className="text-sm font-bold mb-4 flex items-center gap-2 text-gray-300 uppercase tracking-widest border-b border-white/5 pb-4"><Database size={16} className="text-emerald-500" /> Sincronização PC e Mobile</h2>
               <div className="relative z-10">
-                <p className="text-sm text-gray-300 font-semibold">Backup completo e gratuito</p>
-                <p className="text-xs text-gray-500 mt-1 leading-relaxed">Exporte no dispositivo com os dados mais recentes e importe no outro. Usuários, sucatas, compras, caixa, fornecedores e configurações serão transferidos.</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-5">
+                <p className="text-sm text-gray-300 font-semibold">Sincronização automática gratuita pela rede local</p>
+                <p className="text-xs text-gray-500 mt-1 leading-relaxed">Mantenha o ScrapSys aberto no PC e conecte os dois dispositivos ao mesmo Wi-Fi. Alterações feitas de um lado aparecem automaticamente no outro.</p>
+
+                {isNativeMobile ? (
+                  <div className="mt-5 space-y-3">
+                    <input
+                      value={automaticSync.serverUrl}
+                      onChange={(event) => setAutomaticSync({ ...automaticSync, enabled: false, serverUrl: event.target.value })}
+                      placeholder="Endereço exibido no PC"
+                      className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white outline-none focus:border-emerald-500/50"
+                    />
+                    <input
+                      value={automaticSync.pairingCode}
+                      onChange={(event) => setAutomaticSync({ ...automaticSync, enabled: false, pairingCode: event.target.value.replace(/\D/g, '').slice(0, 6) })}
+                      inputMode="numeric"
+                      placeholder="Código de pareamento (6 dígitos)"
+                      className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white tracking-[0.3em] outline-none focus:border-emerald-500/50"
+                    />
+                    <div className="flex gap-3">
+                      <button
+                        onClick={handleEnableAutomaticSync}
+                        disabled={isSyncingData}
+                        className="flex-1 px-5 py-3.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-xl font-bold text-sm disabled:opacity-50"
+                      >
+                        {automaticSyncStatus === 'connecting' ? 'Conectando...' : 'Conectar automaticamente'}
+                      </button>
+                      {automaticSync.enabled && (
+                        <button onClick={handleDisableAutomaticSync} className="px-4 py-3.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded-xl font-bold text-sm">Desativar</button>
+                      )}
+                    </div>
+                    <p className={`text-xs font-semibold ${automaticSyncStatus === 'connected' ? 'text-emerald-400' : automaticSyncStatus === 'offline' ? 'text-amber-400' : 'text-gray-500'}`}>
+                      {automaticSyncStatus === 'connected' ? 'Conectado ao PC e sincronizando.' : automaticSyncStatus === 'offline' ? 'PC indisponível. Tentaremos novamente automaticamente.' : 'Aguardando pareamento.'}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="mt-5 rounded-2xl bg-black/40 border border-white/10 p-4">
+                    <p className="text-[10px] uppercase tracking-widest text-gray-500 font-bold">Endereço deste PC</p>
+                    {(syncServerInfo?.addresses || []).map((address) => (
+                      <p key={address} className="mt-2 text-sm font-mono text-emerald-400 break-all">{address}</p>
+                    ))}
+                    {!syncServerInfo?.addresses?.length && <p className="mt-2 text-sm text-amber-400">Conecte o PC a uma rede Wi-Fi ou cabo.</p>}
+                    <p className="text-[10px] uppercase tracking-widest text-gray-500 font-bold mt-4">Código de pareamento</p>
+                    <p className="mt-1 text-2xl font-black tracking-[0.35em] text-white">{syncServerInfo?.pairingCode || '------'}</p>
+                  </div>
+                )}
+
+                <p className="text-[10px] text-gray-600 mt-6 uppercase tracking-wider">Backup manual de segurança</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
                   <button
                     onClick={handleExportBackup}
                     disabled={isSyncingData}

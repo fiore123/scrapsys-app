@@ -1,4 +1,4 @@
-import { Capacitor } from '@capacitor/core'
+import { Capacitor, CapacitorHttp } from '@capacitor/core'
 import { App } from '@capacitor/app'
 import { Device } from '@capacitor/device'
 import { Directory, Encoding, Filesystem } from '@capacitor/filesystem'
@@ -7,6 +7,19 @@ import { Preferences } from '@capacitor/preferences'
 import { Share } from '@capacitor/share'
 
 export const isNativeMobile = Capacitor.isNativePlatform()
+
+const SYNC_SETTINGS_KEY = '__scrapsys_sync_settings'
+const SYNC_META_KEY = '__scrapsys_sync_meta'
+
+async function readPreferenceJson(key, fallback) {
+  const { value } = await Preferences.get({ key })
+  if (!value) return fallback
+  try {
+    return JSON.parse(value)
+  } catch {
+    return fallback
+  }
+}
 
 export async function loadLocalData(key) {
   if (isNativeMobile) {
@@ -20,11 +33,88 @@ export async function loadLocalData(key) {
 
 export async function saveLocalData(key, data) {
   if (isNativeMobile) {
-    await Preferences.set({ key, value: JSON.stringify(data) })
+    const serialized = JSON.stringify(data)
+    const { value: previousValue } = await Preferences.get({ key })
+    if (previousValue === serialized) return
+
+    await Preferences.set({ key, value: serialized })
+    if (!key.startsWith('__scrapsys_')) {
+      const meta = await readPreferenceJson(SYNC_META_KEY, {})
+      meta[key] = Date.now()
+      await Preferences.set({ key: SYNC_META_KEY, value: JSON.stringify(meta) })
+    }
     return
   }
 
   localStorage.setItem(key, JSON.stringify(data))
+}
+
+export async function getAutomaticSyncSettings() {
+  if (!isNativeMobile) return null
+  return readPreferenceJson(SYNC_SETTINGS_KEY, {
+    enabled: false,
+    serverUrl: '',
+    pairingCode: ''
+  })
+}
+
+export async function saveAutomaticSyncSettings(settings) {
+  if (!isNativeMobile) return
+  const normalized = {
+    enabled: Boolean(settings.enabled),
+    serverUrl: String(settings.serverUrl || '')
+      .trim()
+      .replace(/\/$/, ''),
+    pairingCode: String(settings.pairingCode || '').trim()
+  }
+  await Preferences.set({ key: SYNC_SETTINGS_KEY, value: JSON.stringify(normalized) })
+}
+
+export async function runAutomaticSync(settingsOverride) {
+  if (!isNativeMobile) return { ok: false, changed: false }
+
+  const settings = settingsOverride || (await getAutomaticSyncSettings())
+  if (!settings?.enabled || !settings.serverUrl || !settings.pairingCode) {
+    return { ok: false, changed: false, message: 'Sincronizacao automatica nao configurada.' }
+  }
+
+  const { keys } = await Preferences.keys()
+  const businessKeys = keys.filter((key) => !key.startsWith('__scrapsys_'))
+  const entries = await Promise.all(
+    businessKeys.map(async (key) => {
+      const { value } = await Preferences.get({ key })
+      return [key, value ? JSON.parse(value) : null]
+    })
+  )
+  const localData = Object.fromEntries(entries)
+  const localMeta = await readPreferenceJson(SYNC_META_KEY, {})
+  const response = await CapacitorHttp.post({
+    url: `${settings.serverUrl}/sync`,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-ScrapSys-Code': settings.pairingCode
+    },
+    data: { data: localData, meta: localMeta },
+    connectTimeout: 6000,
+    readTimeout: 6000
+  })
+  const result = response.data
+  if (response.status < 200 || response.status >= 300 || !result?.ok) {
+    throw new Error(result?.message || 'PC indisponivel.')
+  }
+
+  const remoteData = result.data || {}
+  const changed = Object.entries(remoteData).some(
+    ([key, value]) => JSON.stringify(localData[key]) !== JSON.stringify(value)
+  )
+
+  await Promise.all(
+    Object.entries(remoteData).map(([key, value]) =>
+      Preferences.set({ key, value: JSON.stringify(value) })
+    )
+  )
+  await Preferences.set({ key: SYNC_META_KEY, value: JSON.stringify(result.meta || {}) })
+  return { ok: true, changed }
 }
 
 async function readAllData() {
@@ -34,8 +124,9 @@ async function readAllData() {
 
   if (isNativeMobile) {
     const { keys } = await Preferences.keys()
+    const businessKeys = keys.filter((key) => !key.startsWith('__scrapsys_'))
     const entries = await Promise.all(
-      keys.map(async (key) => {
+      businessKeys.map(async (key) => {
         const { value } = await Preferences.get({ key })
         return [key, value ? JSON.parse(value) : null]
       })
@@ -90,11 +181,11 @@ export async function exportBackup() {
 export function validateBackup(payload) {
   return Boolean(
     payload &&
-      payload.format === 'scrapsys-backup' &&
-      payload.schemaVersion === 1 &&
-      payload.data &&
-      typeof payload.data === 'object' &&
-      !Array.isArray(payload.data)
+    payload.format === 'scrapsys-backup' &&
+    payload.schemaVersion === 1 &&
+    payload.data &&
+    typeof payload.data === 'object' &&
+    !Array.isArray(payload.data)
   )
 }
 
@@ -108,12 +199,23 @@ export async function importBackup(payload) {
   }
 
   if (isNativeMobile) {
+    const syncSettings = await Preferences.get({ key: SYNC_SETTINGS_KEY })
     await Preferences.clear()
     await Promise.all(
-      Object.entries(payload.data).map(([key, value]) =>
-        Preferences.set({ key, value: JSON.stringify(value) })
-      )
+      Object.entries(payload.data)
+        .filter(([key]) => !key.startsWith('__scrapsys_'))
+        .map(([key, value]) => Preferences.set({ key, value: JSON.stringify(value) }))
     )
+    const timestamp = Date.now()
+    const meta = Object.fromEntries(
+      Object.keys(payload.data)
+        .filter((key) => !key.startsWith('__scrapsys_'))
+        .map((key) => [key, timestamp])
+    )
+    await Preferences.set({ key: SYNC_META_KEY, value: JSON.stringify(meta) })
+    if (syncSettings.value) {
+      await Preferences.set({ key: SYNC_SETTINGS_KEY, value: syncSettings.value })
+    }
     return
   }
 

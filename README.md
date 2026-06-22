@@ -46,10 +46,16 @@ anterior; use sempre a mesma chave para preservar os dados.
 
 ### Sincronizacao gratuita PC e Android
 
-Em `Configuracoes > Sincronizacao PC e Mobile`, exporte o backup no dispositivo
-mais atualizado e importe o arquivo JSON no outro. A importacao substitui os dados
-locais e transfere usuarios, sucatas, compras, caixa, fornecedores e equipamentos.
-O arquivo contem dados de acesso e deve ser guardado em local privado.
+Com o ScrapSys aberto no PC, acesse `Configuracoes > Sincronizacao PC e Mobile`.
+No Android, informe um dos enderecos exibidos no PC e o codigo de pareamento de
+seis digitos. Os dois dispositivos devem estar na mesma rede Wi-Fi ou local.
+
+Depois do pareamento, usuarios, sucatas, compras, caixa, fornecedores e
+configuracoes sao sincronizados automaticamente nos dois sentidos. No primeiro
+uso, permita o acesso do ScrapSys a redes privadas no Firewall do Windows.
+
+A exportacao e importacao de backup continuam disponiveis como recuperacao de
+seguranca. O arquivo contem dados de acesso e deve ser guardado em local privado.
 
 ### Assinatura Android
 
