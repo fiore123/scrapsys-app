@@ -10,6 +10,19 @@ import androidx.core.view.WindowInsetsCompat;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
+    private int bottomInsetCssPixels = 56;
+
+    private void applyBottomInsetToWebView() {
+        if (getBridge() == null || getBridge().getWebView() == null) return;
+
+        String script = "document.documentElement.style.setProperty('--android-system-bottom', '"
+            + bottomInsetCssPixels
+            + "px')";
+        getBridge().getWebView().post(() ->
+            getBridge().getWebView().evaluateJavascript(script, null)
+        );
+    }
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -22,9 +35,21 @@ public class MainActivity extends BridgeActivity {
             Insets bars = windowInsets.getInsets(
                 WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout()
             );
-            view.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+            float density = getResources().getDisplayMetrics().density;
+            bottomInsetCssPixels = bars.bottom > 0
+                ? Math.max(1, Math.round(bars.bottom / density))
+                : 56;
+            view.setPadding(bars.left, bars.top, bars.right, 0);
+            applyBottomInsetToWebView();
             return WindowInsetsCompat.CONSUMED;
         });
         ViewCompat.requestApplyInsets(webView);
+        applyBottomInsetToWebView();
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) applyBottomInsetToWebView();
     }
 }
