@@ -37,6 +37,21 @@ function saveToDatabase(key, data) {
   }
 }
 
+function replaceDatabase(data) {
+  try {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return false
+
+    fs.mkdirSync(app.getPath('userData'), { recursive: true })
+    const temporaryPath = `${dbPath}.tmp`
+    fs.writeFileSync(temporaryPath, JSON.stringify(data, null, 2), 'utf8')
+    fs.renameSync(temporaryPath, dbPath)
+    return true
+  } catch (error) {
+    console.error('Erro ao importar banco de dados:', error)
+    return false
+  }
+}
+
 function createWindow() {
   const mainWindow = new BrowserWindow({
     width: 900,
@@ -101,6 +116,10 @@ app.whenReady().then(() => {
     const db = loadDatabase()
     return db[key] ?? null
   })
+
+  ipcMain.handle('export-data', async () => loadDatabase())
+
+  ipcMain.handle('import-data', async (_, data) => replaceDatabase(data))
 
   ipcMain.handle('get-version', async () => {
     return app.getVersion()

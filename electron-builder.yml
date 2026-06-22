@@ -1,7 +1,7 @@
-appId: com.electron.app
-productName: scrapsys-app
+appId: com.scrapsys.industrial
+productName: ScrapSys
 directories:
-  buildResources: build
+  buildResources: resources
 files:
   - '!**/.vscode/*'
   - '!src/*'
@@ -11,9 +11,10 @@ files:
 asarUnpack:
   - resources/**
 win:
-  executableName: scrapsys-app
+  executableName: ScrapSys
+  icon: resources/icon.png
 nsis:
-  artifactName: ${name}-${version}-setup.${ext}
+  artifactName: ScrapSys-Setup-${version}.${ext}
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
@@ -38,7 +39,8 @@ appImage:
   artifactName: ${name}-${version}.${ext}
 npmRebuild: false
 publish:
-  provider: generic
-  url: https://example.com/auto-updates
+  provider: github
+  owner: fiore123
+  repo: scrapsys-app
 electronDownload:
   mirror: https://npmmirror.com/mirrors/electron/

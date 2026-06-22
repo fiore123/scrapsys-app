@@ -5,6 +5,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   saveData: (key, data) => ipcRenderer.invoke('save-data', key, data),
 
+  exportData: () => ipcRenderer.invoke('export-data'),
+
+  importData: (data) => ipcRenderer.invoke('import-data', data),
+
   getVersion: () => ipcRenderer.invoke('get-version'),
 
   onUpdateAvailable: (callback) => {

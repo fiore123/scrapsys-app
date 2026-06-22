@@ -1,0 +1,17 @@
+{
+  "appId": "com.scrapsys.industrial",
+  "appName": "ScrapSys",
+  "webDir": "dist-mobile",
+  "backgroundColor": "#0a0a0a",
+  "android": {
+    "allowMixedContent": false,
+    "backgroundColor": "#0a0a0a"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchAutoHide": true,
+      "backgroundColor": "#0a0a0a",
+      "showSpinner": false
+    }
+  }
+}

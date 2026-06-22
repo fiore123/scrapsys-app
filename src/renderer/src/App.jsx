@@ -7,8 +7,19 @@ import {
   ChevronRight, ChevronDown, Usb, Wifi, MonitorSmartphone, Server,
   FileText, Users, UserPlus, Shield, Copy, Mail, Key, Power, PowerOff, X,
   LogOut, CalendarClock, RefreshCw, Download, Info,
-  Truck, MessageCircle
+  Truck, MessageCircle, Upload, Database
 } from 'lucide-react';
+import {
+  getNativeAppVersion,
+  exportBackup,
+  importBackup,
+  isNativeMobile,
+  loadLocalData,
+  saveLocalData,
+  tapFeedback
+} from './platform';
+import scrapSysLogo from './assets/logo-scrap.png';
+import scrapSysMark from './assets/logo-scrap-mark.png';
 
 const INITIAL_SCRAPS = [
   { code: '001', name: 'Cobre Mel', price: 45.00 },
@@ -59,8 +70,8 @@ const loadData = async (key, defaultData) => {
       return data ?? defaultData;
     }
 
-    const saved = localStorage.getItem(key);
-    return saved ? JSON.parse(saved) : defaultData;
+    const saved = await loadLocalData(key);
+    return saved ?? defaultData;
   } catch (e) {
     console.error(`Erro ao carregar ${key}:`, e);
     return defaultData;
@@ -74,7 +85,7 @@ const saveData = async (key, data) => {
       return true;
     }
 
-    localStorage.setItem(key, JSON.stringify(data));
+    await saveLocalData(key, data);
     return true;
   } catch (e) {
     console.error(`Erro ao salvar ${key}:`, e);
@@ -106,6 +117,7 @@ export default function App() {
   };
   
   const codeInputRef = useRef(null);
+  const backupInputRef = useRef(null);
 
   const [weight, setWeight] = useState('');
   const [code, setCode] = useState('');
@@ -127,6 +139,7 @@ export default function App() {
   const [isSearchingDevice, setIsSearchingDevice] = useState(false);
 
   const [isScaleDropdownOpen, setIsScaleDropdownOpen] = useState(false);
+  const [isMobileScrapDropdownOpen, setIsMobileScrapDropdownOpen] = useState(false);
 
   const currentScale = scales.find(s => s.id === activeScaleId);
   const scaleConnected = currentScale?.isConnected || false;
@@ -149,6 +162,7 @@ export default function App() {
   const [newPasswordInput, setNewPasswordInput] = useState('');
   const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+  const [isSyncingData, setIsSyncingData] = useState(false);
 
   const [appVersion, setAppVersion] = useState('1.0.X');
 
@@ -202,6 +216,8 @@ export default function App() {
         if (window.electronAPI && window.electronAPI.getVersion) {
           const version = await window.electronAPI.getVersion();
           setAppVersion(version);
+        } else {
+          setAppVersion(await getNativeAppVersion('1.2.4'));
         }
       } catch (error) {
         console.error('Erro ao obter versão:', error);
@@ -292,6 +308,12 @@ export default function App() {
   }, []);
 
   const handleApplyUpdate = () => {
+    if (isNativeMobile) {
+      showToast("No Android, instale a nova versao pela Play Store ou por um APK assinado.");
+      setUpdateAvailable(false);
+      return;
+    }
+
     setIsUpdating(true);
 
     if (window.electronAPI && window.electronAPI.applyUpdate) {
@@ -309,6 +331,11 @@ export default function App() {
     setIsCheckingUpdate(true);
 
     try {
+      if (isNativeMobile) {
+        showToast("Android: atualizacoes sao distribuidas pela Play Store ou por APK assinado.");
+        return;
+      }
+
       if (window.electronAPI && window.electronAPI.checkForUpdates) {
         const result = await window.electronAPI.checkForUpdates();
 
@@ -325,6 +352,43 @@ export default function App() {
       showToast("Erro ao verificar atualizações.");
     } finally {
       setIsCheckingUpdate(false);
+    }
+  };
+
+  const handleExportBackup = async () => {
+    setIsSyncingData(true);
+    try {
+      const fileName = await exportBackup();
+      showToast(`Backup criado: ${fileName}`);
+    } catch (error) {
+      console.error('Erro ao exportar backup:', error);
+      showToast('Nao foi possivel criar o backup.');
+    } finally {
+      setIsSyncingData(false);
+    }
+  };
+
+  const handleImportBackup = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    setIsSyncingData(true);
+    try {
+      const payload = JSON.parse(await file.text());
+      const confirmed = window.confirm(
+        'Importar este backup substituirá todos os dados atuais deste dispositivo. Deseja continuar?'
+      );
+      if (!confirmed) return;
+
+      await importBackup(payload);
+      showToast('Dados importados. O ScrapSys sera reiniciado.');
+      setTimeout(() => window.location.reload(), 1200);
+    } catch (error) {
+      console.error('Erro ao importar backup:', error);
+      showToast(error?.message || 'Arquivo de backup invalido.');
+    } finally {
+      setIsSyncingData(false);
     }
   };
 
@@ -701,6 +765,13 @@ export default function App() {
     }
   }, [code, scraps, isCustomPrice]);
 
+  const handleSelectMobileScrap = (scrap) => {
+    setCode(scrap.code);
+    setSelectedScrap(scrap);
+    if (!isCustomPrice) setPricePerKg(scrap.price);
+    setIsMobileScrapDropdownOpen(false);
+  };
+
   const totalValue = useMemo(() => {
     return (parseFloat(weight) || 0) * pricePerKg;
   }, [weight, pricePerKg]);
@@ -966,10 +1037,9 @@ export default function App() {
         
         <div className="bg-[#121212]/80 backdrop-blur-xl border border-white/10 rounded-[2rem] p-8 w-full max-w-md shadow-2xl relative z-10 animate-in zoom-in-95">
           <div className="flex flex-col items-center mb-8">
-            <div className="bg-emerald-500/20 p-4 rounded-2xl border border-emerald-500/30 mb-4">
-              <Scale className="text-emerald-400" size={40} />
+            <div className="mb-4">
+              <img src={scrapSysLogo} alt="ScrapSys" className="w-52 h-40 object-contain drop-shadow-2xl" />
             </div>
-            <h1 className="text-3xl font-black tracking-tight text-white/90">ScrapSys</h1>
             <p className="text-sm text-gray-500 tracking-widest uppercase mt-1">Offline System</p>
           </div>
 
@@ -997,7 +1067,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-gray-200 font-sans p-4 md:p-8 selection:bg-emerald-500/30 flex flex-col relative overflow-hidden">
+    <div onClick={tapFeedback} className={`${isNativeMobile ? 'native-mobile ' : ''}app-safe-area min-h-screen bg-[#0a0a0a] text-gray-200 font-sans md:p-8 selection:bg-emerald-500/30 flex flex-col relative overflow-hidden`}>
       
       {updateAvailable && (
         <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-[100] bg-indigo-600 text-white px-6 py-3 rounded-full shadow-2xl border border-indigo-400/30 animate-in slide-in-from-top-5 fade-in flex items-center gap-4 font-bold text-sm">
@@ -1022,18 +1092,18 @@ export default function App() {
       <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-emerald-900/10 rounded-full blur-[120px] pointer-events-none"></div>
       <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-zinc-800/40 rounded-full blur-[120px] pointer-events-none"></div>
 
-      <header className="flex justify-between items-center mb-8 max-w-6xl mx-auto w-full bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl p-4 shadow-xl z-10">
+      <header className="flex justify-between items-center mb-6 md:mb-8 max-w-6xl mx-auto w-full bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl p-3 md:p-4 shadow-xl z-10">
         <div className="flex items-center gap-3">
-          <div className="bg-emerald-500/20 p-2 rounded-xl backdrop-blur-md border border-emerald-500/30">
-            <Scale className="text-emerald-400" size={28} />
+          <div className="w-14 h-14 rounded-xl bg-black/40 border border-emerald-500/20 flex items-center justify-center overflow-hidden">
+            <img src={scrapSysMark} alt="ScrapSys" className="w-12 h-12 object-contain" />
           </div>
           <div>
-            <h1 className="text-2xl font-black tracking-tight text-white/90">ScrapSys</h1>
+            <h1 className="text-xl md:text-2xl font-black tracking-tight text-white/90">ScrapSys</h1>
             <p className="text-[10px] text-emerald-500/70 font-mono tracking-widest">{currentUser.name}</p>
           </div>
         </div>
 
-        <div className="flex bg-black/40 rounded-xl p-1 border border-white/5 gap-1 overflow-x-auto custom-scrollbar">
+        <div className="mobile-bottom-nav flex bg-black/90 md:bg-black/40 backdrop-blur-xl rounded-2xl md:rounded-xl p-1.5 md:p-1 border border-white/10 md:border-white/5 gap-1 overflow-x-auto custom-scrollbar">
           <button onClick={() => setActiveTab('home')} title="Pesagem Rápida" className={`p-3 shrink-0 rounded-lg transition-all ${activeTab === 'home' ? 'bg-zinc-800 text-emerald-400 shadow-md border border-white/10' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}><Home size={22} /></button>
           <button onClick={() => setActiveTab('finance')} title="Financeiro" className={`p-3 shrink-0 rounded-lg transition-all ${activeTab === 'finance' ? 'bg-zinc-800 text-emerald-400 shadow-md border border-white/10' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}><PieChart size={22} /></button>
           <button onClick={() => setActiveTab('register')} title="Cadastro de Material" className={`p-3 shrink-0 rounded-lg transition-all ${activeTab === 'register' ? 'bg-zinc-800 text-emerald-400 shadow-md border border-white/10' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}><PackagePlus size={22} /></button>
@@ -1140,12 +1210,51 @@ export default function App() {
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
-                    <div className="bg-black/40 rounded-2xl p-4 border border-white/5">
-                      <label className="text-xs text-gray-500 mb-2 flex items-center gap-1.5 uppercase tracking-wider font-semibold"><Barcode size={14} /> Código / Leitor</label>
-                      <input 
-                        ref={codeInputRef} type="text" value={code} onChange={(e) => setCode(e.target.value)}
-                        placeholder="Digite ou bipe..." className="w-full bg-zinc-900/50 border border-white/10 rounded-xl px-4 py-3 text-xl font-medium text-white placeholder-gray-700 focus:ring-1 focus:ring-emerald-500/50 outline-none transition-all" autoFocus
-                      />
+                    <div className="bg-black/40 rounded-2xl p-4 border border-white/5 relative">
+                      {isNativeMobile ? (
+                        <>
+                          <label className="text-xs text-gray-500 mb-2 flex items-center gap-1.5 uppercase tracking-wider font-semibold"><PackagePlus size={14} /> Tipo de Sucata</label>
+                          <button
+                            type="button"
+                            onClick={() => setIsMobileScrapDropdownOpen(!isMobileScrapDropdownOpen)}
+                            className="w-full min-h-14 bg-zinc-900/70 border border-white/10 rounded-xl px-4 py-3 text-left flex items-center gap-3 focus:border-emerald-500/60 outline-none"
+                          >
+                            <span className="flex-1 min-w-0">
+                              <span className={`block font-bold truncate ${selectedScrap ? 'text-white' : 'text-gray-600'}`}>{selectedScrap?.name || 'Selecione o material'}</span>
+                              {selectedScrap && <span className="block text-xs text-emerald-500/80 mt-0.5">Cód. {selectedScrap.code} · {formatCurrency(selectedScrap.price)}/kg</span>}
+                            </span>
+                            <ChevronDown size={18} className={`text-gray-500 shrink-0 transition-transform ${isMobileScrapDropdownOpen ? 'rotate-180' : ''}`} />
+                          </button>
+
+                          {isMobileScrapDropdownOpen && (
+                            <>
+                              <button type="button" aria-label="Fechar lista de sucatas" className="fixed inset-0 z-40 cursor-default" onClick={() => setIsMobileScrapDropdownOpen(false)} />
+                              <div className="absolute z-50 top-full left-0 right-0 mt-2 max-h-72 overflow-y-auto rounded-2xl bg-zinc-900 border border-white/10 shadow-2xl p-2">
+                                {scraps.map((scrap) => (
+                                  <button
+                                    type="button"
+                                    key={scrap.code}
+                                    onClick={() => handleSelectMobileScrap(scrap)}
+                                    className={`w-full p-3 rounded-xl flex items-center gap-3 text-left transition-colors ${selectedScrap?.code === scrap.code ? 'bg-emerald-500/15 border border-emerald-500/30' : 'hover:bg-white/5 border border-transparent'}`}
+                                  >
+                                    <span className="w-10 h-10 rounded-lg bg-black/40 text-emerald-400 font-mono text-xs flex items-center justify-center shrink-0">{scrap.code}</span>
+                                    <span className="flex-1 min-w-0 font-semibold text-gray-200 truncate">{scrap.name}</span>
+                                    <span className="text-xs font-bold text-emerald-400 shrink-0">{formatCurrency(scrap.price)}/kg</span>
+                                  </button>
+                                ))}
+                              </div>
+                            </>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <label className="text-xs text-gray-500 mb-2 flex items-center gap-1.5 uppercase tracking-wider font-semibold"><Barcode size={14} /> Código / Leitor</label>
+                          <input 
+                            ref={codeInputRef} type="text" value={code} onChange={(e) => setCode(e.target.value)}
+                            placeholder="Digite ou bipe..." className="w-full bg-zinc-900/50 border border-white/10 rounded-xl px-4 py-3 text-xl font-medium text-white placeholder-gray-700 focus:ring-1 focus:ring-emerald-500/50 outline-none transition-all" autoFocus
+                          />
+                        </>
+                      )}
                     </div>
                     <div className="bg-black/40 rounded-2xl p-4 border border-white/5 flex flex-col justify-center">
                       <label className="text-xs text-gray-500 mb-1 flex items-center gap-1.5 uppercase tracking-wider font-semibold"><Search size={14} /> Material Identificado</label>
@@ -1605,15 +1714,48 @@ export default function App() {
             </div>
             
             <div className="bg-[#121212]/80 backdrop-blur-xl border border-white/5 rounded-[2rem] p-6 shadow-xl relative overflow-hidden">
+              <div className="absolute -top-32 -right-32 w-64 h-64 bg-emerald-900 rounded-full mix-blend-multiply filter blur-[100px] opacity-10"></div>
+              <h2 className="text-sm font-bold mb-4 flex items-center gap-2 text-gray-300 uppercase tracking-widest border-b border-white/5 pb-4"><Database size={16} className="text-emerald-500" /> Sincronização PC e Mobile</h2>
+              <div className="relative z-10">
+                <p className="text-sm text-gray-300 font-semibold">Backup completo e gratuito</p>
+                <p className="text-xs text-gray-500 mt-1 leading-relaxed">Exporte no dispositivo com os dados mais recentes e importe no outro. Usuários, sucatas, compras, caixa, fornecedores e configurações serão transferidos.</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-5">
+                  <button
+                    onClick={handleExportBackup}
+                    disabled={isSyncingData}
+                    className="px-5 py-3.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-xl font-bold text-sm hover:bg-emerald-500/20 disabled:opacity-50 transition-colors flex justify-center items-center gap-2"
+                  >
+                    <Download size={17} /> Exportar sincronização
+                  </button>
+                  <button
+                    onClick={() => backupInputRef.current?.click()}
+                    disabled={isSyncingData}
+                    className="px-5 py-3.5 bg-white/5 text-gray-300 border border-white/10 rounded-xl font-bold text-sm hover:bg-white/10 disabled:opacity-50 transition-colors flex justify-center items-center gap-2"
+                  >
+                    <Upload size={17} /> Importar sincronização
+                  </button>
+                  <input
+                    ref={backupInputRef}
+                    type="file"
+                    accept="application/json,.json"
+                    onChange={handleImportBackup}
+                    className="hidden"
+                  />
+                </div>
+                <p className="text-[10px] text-amber-500/70 mt-4 uppercase tracking-wider">O arquivo contém dados de acesso. Guarde-o em local privado.</p>
+              </div>
+            </div>
+
+            <div className="bg-[#121212]/80 backdrop-blur-xl border border-white/5 rounded-[2rem] p-6 shadow-xl relative overflow-hidden">
               <div className="absolute -top-32 -left-32 w-64 h-64 bg-blue-900 rounded-full mix-blend-multiply filter blur-[100px] opacity-10"></div>
               <h2 className="text-sm font-bold mb-4 flex items-center gap-2 text-gray-300 uppercase tracking-widest border-b border-white/5 pb-4"><RefreshCw size={16} className="text-gray-500" /> Atualizações do Sistema</h2>
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between relative z-10 gap-4">
                 <div>
                   <div className="flex items-center gap-3">
-                    <p className="text-sm font-bold text-gray-200">Verificar Novas Versões</p>
+                    <p className="text-sm font-bold text-gray-200">{isNativeMobile ? 'Atualizações do Android' : 'Verificar Novas Versões'}</p>
                     <span className="px-2 py-0.5 rounded bg-blue-500/20 text-blue-400 text-[10px] font-bold tracking-widest border border-blue-500/20">v{appVersion}</span>
                   </div>
-                  <p className="text-xs text-gray-500 mt-1">Sincronize com o servidor para garantir que possui a última versão do ScrapSys instalada.</p>
+                  <p className="text-xs text-gray-500 mt-1">{isNativeMobile ? 'Novas versões devem ser instaladas pela Play Store ou usando um APK assinado mais recente.' : 'Sincronize com o servidor para garantir que possui a última versão do ScrapSys instalada.'}</p>
                 </div>
                 <button
                   onClick={handleCheckForUpdates}
@@ -1621,7 +1763,7 @@ export default function App() {
                   className="w-full sm:w-auto px-6 py-3 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-xl font-bold text-sm hover:bg-blue-500/20 disabled:opacity-50 transition-colors flex justify-center items-center gap-2"
                 >
                   {isCheckingUpdate ? <RefreshCw size={16} className="animate-spin" /> : <Download size={16} />}
-                  {isCheckingUpdate ? 'A procurar...' : 'Procurar Atualizações'}
+                  {isCheckingUpdate ? 'A procurar...' : (isNativeMobile ? 'Como atualizar' : 'Procurar Atualizações')}
                 </button>
               </div>
             </div>
