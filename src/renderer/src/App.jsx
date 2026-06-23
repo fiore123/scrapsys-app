@@ -12,11 +12,18 @@ import {
 import {
   getNativeAppVersion,
   getAutomaticSyncSettings,
+  connectCloudSync,
+  disconnectCloudSync,
   exportBackup,
+  getCloudSyncSettings,
+  getCloudSyncUser,
   importBackup,
   isNativeMobile,
   loadLocalData,
+  noteLocalDataChanged,
+  runCloudSync,
   runAutomaticSync,
+  saveCloudSyncSettings,
   saveAutomaticSyncSettings,
   saveLocalData,
   tapFeedback
@@ -85,6 +92,7 @@ const saveData = async (key, data) => {
   try {
     if (window.electronAPI && window.electronAPI.saveData) {
       await window.electronAPI.saveData(key, data);
+      await noteLocalDataChanged(key);
       return true;
     }
 
@@ -171,6 +179,12 @@ export default function App() {
   const [automaticSync, setAutomaticSync] = useState({ enabled: false, serverUrl: '', pairingCode: '' });
   const [syncServerInfo, setSyncServerInfo] = useState(null);
   const [automaticSyncStatus, setAutomaticSyncStatus] = useState('idle');
+  const [cloudSync, setCloudSync] = useState({ enabled: false, email: '' });
+  const [cloudSyncEmail, setCloudSyncEmail] = useState('');
+  const [cloudSyncPassword, setCloudSyncPassword] = useState('');
+  const [cloudSyncStatus, setCloudSyncStatus] = useState('idle');
+  const [cloudSyncUser, setCloudSyncUser] = useState(null);
+  const [cloudLastSync, setCloudLastSync] = useState(null);
   const syncReloadingRef = useRef(false);
 
   const [appVersion, setAppVersion] = useState('1.0.X');
@@ -227,7 +241,7 @@ export default function App() {
           const version = await window.electronAPI.getVersion();
           setAppVersion(version);
         } else {
-          setAppVersion(await getNativeAppVersion('1.2.6'));
+          setAppVersion(await getNativeAppVersion('1.2.7'));
         }
       } catch (error) {
         console.error('Erro ao obter versão:', error);
@@ -247,6 +261,54 @@ export default function App() {
 
     window.electronAPI?.getSyncServerInfo?.().then(setSyncServerInfo);
   }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadCloudSync = async () => {
+      const [settings, user] = await Promise.all([getCloudSyncSettings(), getCloudSyncUser()]);
+      if (!active) return;
+      setCloudSync(settings);
+      setCloudSyncEmail(settings.email || user?.email || '');
+      setCloudSyncUser(user);
+      setCloudSyncStatus(settings.enabled && user ? 'connected' : 'idle');
+    };
+
+    loadCloudSync();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!cloudSync.enabled || !cloudSyncUser) return;
+
+    let active = true;
+    const synchronize = async () => {
+      try {
+        const result = await runCloudSync();
+        if (!active) return;
+        setCloudSyncStatus(result.ok ? 'connected' : 'offline');
+        if (result.ok) setCloudLastSync(new Date());
+        if (result.changed && !syncReloadingRef.current) {
+          syncReloadingRef.current = true;
+          showToast('Dados recebidos da nuvem. Atualizando...');
+          setTimeout(() => window.location.reload(), 600);
+        }
+      } catch (error) {
+        if (active) setCloudSyncStatus('offline');
+        console.warn('Firebase indisponivel:', error);
+      }
+    };
+
+    synchronize();
+    const interval = setInterval(synchronize, 5000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [cloudSync, cloudSyncUser]);
 
   useEffect(() => {
     if (!isNativeMobile || !automaticSync.enabled) return;
@@ -466,6 +528,52 @@ export default function App() {
     setAutomaticSync(settings);
     setAutomaticSyncStatus('idle');
     showToast('Sincronizacao automatica desativada.');
+  };
+
+  const handleConnectCloudSync = async () => {
+    if (!cloudSyncEmail.trim() || cloudSyncPassword.length < 6) {
+      showToast('Informe e-mail e senha com pelo menos 6 caracteres.');
+      return;
+    }
+
+    setIsSyncingData(true);
+    setCloudSyncStatus('connecting');
+    try {
+      const user = await connectCloudSync(cloudSyncEmail, cloudSyncPassword);
+      const settings = await saveCloudSyncSettings({ enabled: true, email: user.email });
+      setCloudSync(settings);
+      setCloudSyncUser(user);
+      setCloudSyncEmail(user.email || cloudSyncEmail);
+      setCloudSyncPassword('');
+      const result = await runCloudSync();
+      setCloudSyncStatus('connected');
+      setCloudLastSync(new Date());
+      showToast('Sincronizacao em nuvem ativada.');
+      if (result.changed) setTimeout(() => window.location.reload(), 600);
+    } catch (error) {
+      console.error('Erro na sincronizacao Firebase:', error);
+      setCloudSyncStatus('offline');
+      showToast(error?.message || 'Nao foi possivel conectar ao Firebase.');
+    } finally {
+      setIsSyncingData(false);
+    }
+  };
+
+  const handleDisconnectCloudSync = async () => {
+    setIsSyncingData(true);
+    try {
+      await disconnectCloudSync();
+      setCloudSync({ enabled: false, email: '' });
+      setCloudSyncUser(null);
+      setCloudSyncPassword('');
+      setCloudSyncStatus('idle');
+      showToast('Sincronizacao em nuvem desativada neste aparelho.');
+    } catch (error) {
+      console.error('Erro ao sair do Firebase:', error);
+      showToast('Nao foi possivel sair da nuvem.');
+    } finally {
+      setIsSyncingData(false);
+    }
   };
 
   const handleImportBackup = async (event) => {
@@ -1817,8 +1925,63 @@ export default function App() {
               <div className="absolute -top-32 -right-32 w-64 h-64 bg-emerald-900 rounded-full mix-blend-multiply filter blur-[100px] opacity-10"></div>
               <h2 className="text-sm font-bold mb-4 flex items-center gap-2 text-gray-300 uppercase tracking-widest border-b border-white/5 pb-4"><Database size={16} className="text-emerald-500" /> Sincronização PC e Mobile</h2>
               <div className="relative z-10">
-                <p className="text-sm text-gray-300 font-semibold">Sincronização automática gratuita pela rede local</p>
-                <p className="text-xs text-gray-500 mt-1 leading-relaxed">Mantenha o ScrapSys aberto no PC e conecte os dois dispositivos ao mesmo Wi-Fi. Alterações feitas de um lado aparecem automaticamente no outro.</p>
+                <div className="rounded-2xl bg-emerald-500/5 border border-emerald-500/20 p-4 mb-5">
+                  <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+                    <div>
+                      <p className="text-sm text-gray-200 font-bold">Nuvem Firebase recomendada</p>
+                      <p className="text-xs text-gray-500 mt-1 leading-relaxed">Sincroniza logins, cadastros, materiais, caixa e movimentacoes entre PC e Android pela internet, sem depender do mesmo Wi-Fi.</p>
+                    </div>
+                    <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border w-fit ${cloudSyncStatus === 'connected' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : cloudSyncStatus === 'offline' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-white/5 text-gray-500 border-white/10'}`}>
+                      {cloudSyncStatus === 'connected' ? 'Conectado' : cloudSyncStatus === 'connecting' ? 'Conectando' : cloudSyncStatus === 'offline' ? 'Offline' : 'Desativado'}
+                    </span>
+                  </div>
+
+                  {cloudSync.enabled && cloudSyncUser ? (
+                    <div className="mt-4 flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
+                      <div>
+                        <p className="text-xs text-gray-400">Conta ativa: <span className="text-emerald-400 font-semibold">{cloudSyncUser.email}</span></p>
+                        <p className="text-[10px] text-gray-600 mt-1 uppercase tracking-wider">
+                          {cloudLastSync ? `Ultima sincronizacao: ${cloudLastSync.toLocaleTimeString('pt-BR')}` : 'Aguardando primeira sincronizacao.'}
+                        </p>
+                      </div>
+                      <button
+                        onClick={handleDisconnectCloudSync}
+                        disabled={isSyncingData}
+                        className="px-4 py-3 bg-red-500/10 text-red-400 border border-red-500/20 rounded-xl font-bold text-sm disabled:opacity-50"
+                      >
+                        Desativar neste aparelho
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="mt-4 grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-3">
+                      <input
+                        type="email"
+                        value={cloudSyncEmail}
+                        onChange={(event) => setCloudSyncEmail(event.target.value)}
+                        placeholder="E-mail da conta de sincronizacao"
+                        className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white outline-none focus:border-emerald-500/50"
+                      />
+                      <input
+                        type="password"
+                        value={cloudSyncPassword}
+                        onChange={(event) => setCloudSyncPassword(event.target.value)}
+                        placeholder="Senha da nuvem"
+                        className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white outline-none focus:border-emerald-500/50"
+                      />
+                      <button
+                        onClick={handleConnectCloudSync}
+                        disabled={isSyncingData}
+                        className="px-5 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-sm disabled:opacity-50 whitespace-nowrap"
+                      >
+                        Entrar / Criar
+                      </button>
+                    </div>
+                  )}
+                  <p className="text-[10px] text-gray-600 mt-4 leading-relaxed">Use o mesmo e-mail e senha no PC e no celular. A primeira conexao pode criar a conta automaticamente se o Firebase Authentication estiver habilitado.</p>
+                </div>
+
+                <p className="text-sm text-gray-300 font-semibold">Rede local gratuita como alternativa</p>
+                <p className="text-xs text-gray-500 mt-1 leading-relaxed">Use quando quiser sincronizar sem internet, mantendo o PC aberto e os dispositivos no mesmo Wi-Fi.</p>
 
                 {isNativeMobile ? (
                   <div className="mt-5 space-y-3">

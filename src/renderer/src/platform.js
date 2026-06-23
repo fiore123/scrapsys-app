@@ -5,11 +5,23 @@ import { Directory, Encoding, Filesystem } from '@capacitor/filesystem'
 import { Haptics, ImpactStyle } from '@capacitor/haptics'
 import { Preferences } from '@capacitor/preferences'
 import { Share } from '@capacitor/share'
+import {
+  getCloudSyncDocRef,
+  getCurrentFirebaseUser,
+  getDoc,
+  serverTimestamp,
+  setDoc,
+  signInOrCreateFirebaseUser,
+  signOutFirebaseUser
+} from './firebase'
 
 export const isNativeMobile = Capacitor.isNativePlatform()
 
 const SYNC_SETTINGS_KEY = '__scrapsys_sync_settings'
 const SYNC_META_KEY = '__scrapsys_sync_meta'
+const CLOUD_SYNC_SETTINGS_KEY = '__scrapsys_cloud_sync_settings'
+const CLOUD_SYNC_META_KEY = '__scrapsys_cloud_sync_meta'
+const CLOUD_DEVICE_KEY = '__scrapsys_cloud_device'
 
 async function readPreferenceJson(key, fallback) {
   const { value } = await Preferences.get({ key })
@@ -19,6 +31,52 @@ async function readPreferenceJson(key, fallback) {
   } catch {
     return fallback
   }
+}
+
+function readBrowserJson(key, fallback) {
+  const value = localStorage.getItem(key)
+  if (!value) return fallback
+  try {
+    return JSON.parse(value)
+  } catch {
+    return fallback
+  }
+}
+
+async function readPrivateJson(key, fallback) {
+  if (isNativeMobile) return readPreferenceJson(key, fallback)
+  return readBrowserJson(key, fallback)
+}
+
+async function writePrivateJson(key, data) {
+  const value = JSON.stringify(data)
+  if (isNativeMobile) {
+    await Preferences.set({ key, value })
+    return
+  }
+  localStorage.setItem(key, value)
+}
+
+async function getCloudDeviceId() {
+  const existing = await readPrivateJson(CLOUD_DEVICE_KEY, null)
+  if (existing) return existing
+
+  const value =
+    globalThis.crypto?.randomUUID?.() ||
+    `scrapsys-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  await writePrivateJson(CLOUD_DEVICE_KEY, value)
+  return value
+}
+
+async function markCloudKeyChanged(key) {
+  if (key.startsWith('__scrapsys_')) return
+  const meta = await readPrivateJson(CLOUD_SYNC_META_KEY, {})
+  meta[key] = Date.now()
+  await writePrivateJson(CLOUD_SYNC_META_KEY, meta)
+}
+
+export async function noteLocalDataChanged(key) {
+  await markCloudKeyChanged(key)
 }
 
 export async function loadLocalData(key) {
@@ -42,11 +100,13 @@ export async function saveLocalData(key, data) {
       const meta = await readPreferenceJson(SYNC_META_KEY, {})
       meta[key] = Date.now()
       await Preferences.set({ key: SYNC_META_KEY, value: JSON.stringify(meta) })
+      await markCloudKeyChanged(key)
     }
     return
   }
 
   localStorage.setItem(key, JSON.stringify(data))
+  await markCloudKeyChanged(key)
 }
 
 export async function getAutomaticSyncSettings() {
@@ -68,6 +128,49 @@ export async function saveAutomaticSyncSettings(settings) {
     pairingCode: String(settings.pairingCode || '').trim()
   }
   await Preferences.set({ key: SYNC_SETTINGS_KEY, value: JSON.stringify(normalized) })
+}
+
+export async function getCloudSyncSettings() {
+  return readPrivateJson(CLOUD_SYNC_SETTINGS_KEY, {
+    enabled: false,
+    email: ''
+  })
+}
+
+export async function saveCloudSyncSettings(settings) {
+  const normalized = {
+    enabled: Boolean(settings.enabled),
+    email: String(settings.email || '').trim().toLowerCase()
+  }
+  await writePrivateJson(CLOUD_SYNC_SETTINGS_KEY, normalized)
+  return normalized
+}
+
+export async function getCloudSyncUser() {
+  const user = await getCurrentFirebaseUser()
+  return user
+    ? {
+        uid: user.uid,
+        email: user.email
+      }
+    : null
+}
+
+export async function connectCloudSync(email, password) {
+  const normalizedEmail = String(email || '').trim().toLowerCase()
+  if (!normalizedEmail || !password) throw new Error('Informe e-mail e senha do Firebase.')
+
+  const credential = await signInOrCreateFirebaseUser(normalizedEmail, password)
+  await saveCloudSyncSettings({ enabled: true, email: normalizedEmail })
+  return {
+    uid: credential.user.uid,
+    email: credential.user.email
+  }
+}
+
+export async function disconnectCloudSync() {
+  await saveCloudSyncSettings({ enabled: false, email: '' })
+  await signOutFirebaseUser()
 }
 
 export async function runAutomaticSync(settingsOverride) {
@@ -140,6 +243,88 @@ async function readAllData() {
       return [key, value ? JSON.parse(value) : null]
     })
   )
+}
+
+async function writeAllData(data, meta) {
+  const safeData = data && typeof data === 'object' && !Array.isArray(data) ? data : {}
+  const entries = Object.entries(safeData).filter(([key]) => !key.startsWith('__scrapsys_'))
+
+  if (window.electronAPI?.importData) {
+    await window.electronAPI.importData(Object.fromEntries(entries))
+  } else if (isNativeMobile) {
+    await Promise.all(
+      entries.map(([key, value]) => Preferences.set({ key, value: JSON.stringify(value) }))
+    )
+  } else {
+    entries.forEach(([key, value]) => {
+      localStorage.setItem(key, JSON.stringify(value))
+    })
+  }
+
+  await writePrivateJson(CLOUD_SYNC_META_KEY, meta || {})
+}
+
+export async function runCloudSync() {
+  const settings = await getCloudSyncSettings()
+  if (!settings.enabled) return { ok: false, changed: false, message: 'Nuvem desativada.' }
+
+  const user = await getCurrentFirebaseUser()
+  if (!user) return { ok: false, changed: false, message: 'Conta Firebase desconectada.' }
+
+  const deviceId = await getCloudDeviceId()
+  const [localData, localMeta, snapshot] = await Promise.all([
+    readAllData(),
+    readPrivateJson(CLOUD_SYNC_META_KEY, {}),
+    getDoc(getCloudSyncDocRef(user.uid))
+  ])
+  const remote = snapshot.exists() ? snapshot.data() : {}
+  const remoteData = remote.data && typeof remote.data === 'object' ? remote.data : {}
+  const remoteMeta = remote.meta && typeof remote.meta === 'object' ? remote.meta : {}
+  const allKeys = new Set([...Object.keys(localData), ...Object.keys(remoteData)])
+  const mergedData = {}
+  const mergedMeta = {}
+  let localChanged = false
+  let cloudChanged = !snapshot.exists()
+
+  allKeys.forEach((key) => {
+    if (key.startsWith('__scrapsys_')) return
+
+    const localTimestamp = Number(localMeta[key] || 0)
+    const remoteTimestamp = Number(remoteMeta[key] || 0)
+
+    if (remoteTimestamp > localTimestamp) {
+      mergedData[key] = remoteData[key]
+      mergedMeta[key] = remoteTimestamp
+      localChanged =
+        localChanged || JSON.stringify(localData[key]) !== JSON.stringify(remoteData[key])
+      return
+    }
+
+    mergedData[key] = localData[key]
+    mergedMeta[key] = Math.max(localTimestamp, remoteTimestamp, Date.now())
+    cloudChanged =
+      cloudChanged ||
+      remoteTimestamp < mergedMeta[key] ||
+      JSON.stringify(remoteData[key]) !== JSON.stringify(localData[key])
+  })
+
+  if (localChanged) {
+    await writeAllData(mergedData, mergedMeta)
+  } else {
+    await writePrivateJson(CLOUD_SYNC_META_KEY, mergedMeta)
+  }
+
+  if (cloudChanged) {
+    await setDoc(getCloudSyncDocRef(user.uid), {
+      data: JSON.parse(JSON.stringify(mergedData)),
+      meta: mergedMeta,
+      updatedAt: serverTimestamp(),
+      updatedBy: deviceId,
+      schemaVersion: 1
+    })
+  }
+
+  return { ok: true, changed: localChanged }
 }
 
 export async function exportBackup() {

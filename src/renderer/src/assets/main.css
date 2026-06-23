@@ -49,9 +49,10 @@ textarea {
 
 @media (max-width: 767px) {
   .native-mobile {
-    --bottom-navigation-clearance: max(
-      var(--safe-bottom),
-      var(--android-system-bottom, 56px)
+    --bottom-navigation-clearance: clamp(
+      14px,
+      max(var(--safe-bottom), var(--android-system-bottom, 0px)),
+      46px
     );
   }
 
@@ -79,7 +80,7 @@ textarea {
   }
 
   .native-mobile .mobile-bottom-nav {
-    bottom: calc(0.75rem + var(--bottom-navigation-clearance));
+    bottom: calc(0.4rem + var(--bottom-navigation-clearance));
   }
 
   .mobile-bottom-nav button {
