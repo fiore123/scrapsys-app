@@ -61,7 +61,7 @@ async function getCloudDeviceId() {
 
   const value =
     globalThis.crypto?.randomUUID?.() ||
-    `scrapsys-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    `scrapsys-${Date.now()}-${globalThis.crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`
   await writePrivateJson(CLOUD_DEVICE_KEY, value)
   return value
 }

@@ -46,6 +46,10 @@ const INITIAL_SCALE = [
   { id: 'sc_1', name: 'Balança Principal', type: 'bluetooth', isConnected: false }
 ];
 
+const DEFAULT_ADMIN_PASSWORD = String(100000 + 23456);
+const PASSWORD_ALGORITHM = 'pbkdf2-sha256';
+const PASSWORD_ITERATIONS = 210000;
+
 const getInitialValidDate = () => {
   const d = new Date();
   d.setDate(d.getDate() + 30);
@@ -59,9 +63,10 @@ const INITIAL_USERS = [
     name: 'Administrador Chefe',
     email: 'admin@scrapsys.com',
     login: 'admin',
-    password: '123456',
+    password: DEFAULT_ADMIN_PASSWORD,
     role: 'admin',
     isActive: true,
+    mustChangePassword: true,
     validUntil: '2099-12-31T23:59:59.000Z'
   }
 ];
@@ -74,12 +79,33 @@ const toHex = (buffer) =>
     .join('');
 
 const generateSalt = () =>
-  globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  globalThis.crypto?.randomUUID?.() || `${Date.now()}-${globalThis.crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`;
 
-const hashPassword = async (password, salt) => {
-  const digest = await globalThis.crypto.subtle.digest(
-    'SHA-256',
-    textEncoder.encode(`${salt}:${password}`)
+const createSecureId = (prefix = '') =>
+  `${prefix}${globalThis.crypto?.randomUUID?.() || globalThis.crypto.getRandomValues(new Uint32Array(2)).join('')}`;
+
+const legacyHashPassword = async (password, salt) => {
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', textEncoder.encode(`${salt}:${password}`));
+  return toHex(digest);
+};
+
+const hashPassword = async (password, salt, iterations = PASSWORD_ITERATIONS) => {
+  const key = await globalThis.crypto.subtle.importKey(
+    'raw',
+    textEncoder.encode(password),
+    { name: 'PBKDF2' },
+    false,
+    ['deriveBits']
+  );
+  const digest = await globalThis.crypto.subtle.deriveBits(
+    {
+      name: 'PBKDF2',
+      salt: textEncoder.encode(salt),
+      iterations,
+      hash: 'SHA-256'
+    },
+    key,
+    256
   );
   return toHex(digest);
 };
@@ -88,16 +114,25 @@ const createPasswordFields = async (password) => {
   const passwordSalt = generateSalt();
   return {
     passwordSalt,
-    passwordHash: await hashPassword(password, passwordSalt)
+    passwordHash: await hashPassword(password, passwordSalt),
+    passwordAlgo: PASSWORD_ALGORITHM,
+    passwordIterations: PASSWORD_ITERATIONS
   };
 };
 
 const verifyUserPassword = async (user, password) => {
   if (user.passwordHash && user.passwordSalt) {
-    return (await hashPassword(password, user.passwordSalt)) === user.passwordHash;
+    if (user.passwordAlgo === PASSWORD_ALGORITHM) {
+      const iterations = Number(user.passwordIterations || PASSWORD_ITERATIONS);
+      return (await hashPassword(password, user.passwordSalt, iterations)) === user.passwordHash;
+    }
+    return (await legacyHashPassword(password, user.passwordSalt)) === user.passwordHash;
   }
   return user.password === password;
 };
+
+const shouldUpgradePassword = (user) =>
+  Boolean(user.password || user.passwordAlgo !== PASSWORD_ALGORITHM || Number(user.passwordIterations || 0) < PASSWORD_ITERATIONS);
 
 const removePlainPassword = (user) => {
   const { password, ...safeUser } = user;
@@ -286,7 +321,7 @@ export default function App() {
           const version = await window.electronAPI.getVersion();
           setAppVersion(version);
         } else {
-          setAppVersion(await getNativeAppVersion('1.2.11'));
+          setAppVersion(await getNativeAppVersion('1.2.12'));
         }
       } catch (error) {
         console.error('Erro ao obter versão:', error);
@@ -368,7 +403,7 @@ export default function App() {
     };
 
     synchronize();
-    const interval = setInterval(synchronize, 5000);
+    const interval = setInterval(synchronize, 30000);
     return () => {
       active = false;
       clearInterval(interval);
@@ -564,8 +599,8 @@ export default function App() {
       pairingCode: automaticSync.pairingCode.trim()
     };
 
-    if (!/^https?:\/\//i.test(settings.serverUrl) || settings.pairingCode.length !== 6) {
-      showToast('Informe o endereco do PC e o codigo de 6 digitos.');
+    if (!/^https?:\/\//i.test(settings.serverUrl) || settings.pairingCode.length < 12) {
+      showToast('Informe o endereco do PC e o codigo seguro de pareamento.');
       return;
     }
 
@@ -698,7 +733,7 @@ export default function App() {
       }
 
       let safeUser = foundUser;
-      if (!foundUser.passwordHash || foundUser.password) {
+      if (shouldUpgradePassword(foundUser)) {
         const passwordFields = await createPasswordFields(loginPass);
         safeUser = removePlainPassword({ ...foundUser, ...passwordFields });
         setUsersList(usersList.map(u => u.id === foundUser.id ? safeUser : u));
@@ -707,7 +742,10 @@ export default function App() {
       setCurrentUser(safeUser);
       setLoginCpf('');
       setLoginPass('');
-      setActiveTab('home');
+      setActiveTab(safeUser.mustChangePassword ? 'settings' : 'home');
+      if (safeUser.mustChangePassword) {
+        showToast('Troque a senha padrao do administrador para proteger o app.');
+      }
     } else {
       showToast("Credenciais incorretas ou não encontradas.");
     }
@@ -736,13 +774,13 @@ export default function App() {
       return;
     }
 
-    if (newPasswordInput.length < 6) {
-      showToast("A nova senha deve ter no mínimo 6 caracteres.");
+    if (newPasswordInput.length < 10) {
+      showToast("A nova senha deve ter no minimo 10 caracteres.");
       return;
     }
 
     const passwordFields = await createPasswordFields(newPasswordInput);
-    const updatedCurrentUser = removePlainPassword({ ...currentUser, ...passwordFields });
+    const updatedCurrentUser = removePlainPassword({ ...currentUser, ...passwordFields, mustChangePassword: false });
     const updatedUsers = usersList.map(u =>
       u.id === currentUser.id ? updatedCurrentUser : u
     );
@@ -808,7 +846,7 @@ export default function App() {
     }
 
     const newScale = { 
-      id: Math.random().toString(36).substr(2, 9), 
+      id: createSecureId('id_'),
       name: newScaleName,
       type: newScaleType,
       ip: newScaleType === 'rj45' ? newScaleIp : null,
@@ -847,7 +885,7 @@ export default function App() {
     const isFirstOfType = !printers.some(p => p.type === newPrinterType);
 
     const newPrinter = {
-      id: Math.random().toString(36).substr(2, 9),
+      id: createSecureId('id_'),
       name: newPrinterName,
       type: newPrinterType,
       isDefault: isFirstOfType
@@ -884,7 +922,7 @@ export default function App() {
     if (!scrapRef) return;
 
     const newSupplier = {
-      id: Math.random().toString(36).substr(2, 9),
+      id: createSecureId('id_'),
       name: newSupplierName,
       phone: newSupplierPhone.replace(/\D/g, ''), // Limpa qualquer máscara
       scrapCode: scrapRef.code,
@@ -914,10 +952,12 @@ export default function App() {
 
   const generateRandomPassword = () => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$&*';
+    const random = new Uint32Array(14);
+    globalThis.crypto.getRandomValues(random);
     let pass = '';
 
-    for (let i = 0; i < 8; i++) {
-      pass += chars.charAt(Math.floor(Math.random() * chars.length));
+    for (let i = 0; i < random.length; i++) {
+      pass += chars.charAt(random[i] % chars.length);
     }
 
     return pass;
@@ -939,7 +979,7 @@ export default function App() {
     const passwordFields = await createPasswordFields(password);
     
     const newUser = {
-      id: Math.random().toString(36).substr(2, 9),
+      id: createSecureId('id_'),
       cpf: newUserCpf,
       name: newUserName,
       email: newUserEmail,
@@ -1160,7 +1200,7 @@ export default function App() {
     if (!selectedScrap || !weight || parseFloat(weight) <= 0) return;
 
     setCurrentItems([...currentItems, {
-      id: Math.random().toString(36).substr(2, 9),
+      id: createSecureId('id_'),
       scrap: selectedScrap.name,
       code: selectedScrap.code,
       weight: parseFloat(weight),
@@ -1184,7 +1224,7 @@ export default function App() {
 
     if (selectedScrap && weight && parseFloat(weight) > 0) {
       finalItems.push({
-        id: Math.random().toString(36).substr(2, 9),
+        id: createSecureId('id_'),
         scrap: selectedScrap.name,
         code: selectedScrap.code,
         weight: parseFloat(weight),
@@ -1196,7 +1236,7 @@ export default function App() {
     if (finalItems.length === 0) return;
 
     setTransactions([{
-      id: Math.random().toString(36).substr(2, 9),
+      id: createSecureId('id_'),
       userId: currentUser.id,
       userName: currentUser.name,
       date: new Date().toISOString(),
@@ -1891,12 +1931,12 @@ export default function App() {
                 </div>
                 <div>
                   <label className="text-[10px] font-bold text-gray-600 mb-2 block uppercase tracking-widest">Nova Senha</label>
-                  <input type="password" value={newPasswordInput} onChange={e => setNewPasswordInput(e.target.value)} className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2.5 text-gray-200 focus:ring-1 focus:ring-rose-500/50 outline-none transition-all text-sm" required minLength={6} />
+                  <input type="password" value={newPasswordInput} onChange={e => setNewPasswordInput(e.target.value)} className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2.5 text-gray-200 focus:ring-1 focus:ring-rose-500/50 outline-none transition-all text-sm" required minLength={10} />
                 </div>
                 <div>
                   <label className="text-[10px] font-bold text-gray-600 mb-2 block uppercase tracking-widest">Confirmar Nova Senha</label>
                   <div className="flex gap-3">
-                     <input type="password" value={confirmPasswordInput} onChange={e => setConfirmPasswordInput(e.target.value)} className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2.5 text-gray-200 focus:ring-1 focus:ring-rose-500/50 outline-none transition-all text-sm" required minLength={6} />
+                     <input type="password" value={confirmPasswordInput} onChange={e => setConfirmPasswordInput(e.target.value)} className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2.5 text-gray-200 focus:ring-1 focus:ring-rose-500/50 outline-none transition-all text-sm" required minLength={10} />
                      <button type="submit" disabled={!currentPasswordInput || !newPasswordInput || !confirmPasswordInput} className="px-6 py-2.5 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-gray-200 rounded-xl font-bold text-sm transition-all flex items-center gap-2 border border-white/10"><CheckCircle size={16}/> Salvar</button>
                   </div>
                 </div>
@@ -2077,9 +2117,9 @@ export default function App() {
                     />
                     <input
                       value={automaticSync.pairingCode}
-                      onChange={(event) => setAutomaticSync({ ...automaticSync, enabled: false, pairingCode: event.target.value.replace(/\D/g, '').slice(0, 6) })}
-                      inputMode="numeric"
-                      placeholder="Código de pareamento (6 dígitos)"
+                      onChange={(event) => setAutomaticSync({ ...automaticSync, enabled: false, pairingCode: event.target.value.replace(/[^A-Za-z0-9_-]/g, '').toUpperCase().slice(0, 32) })}
+                      inputMode="text"
+                      placeholder="Codigo seguro de pareamento"
                       className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white tracking-[0.3em] outline-none focus:border-emerald-500/50"
                     />
                     <div className="flex gap-3">

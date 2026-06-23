@@ -2,6 +2,8 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Troque pelo UID real do usuario dono criado em Firebase Authentication.
+    // Se este placeholder for mantido, a nuvem fica bloqueada por seguranca.
     function isScrapSysOwner() {
       return request.auth != null
         && request.auth.uid == 'TROQUE_PELO_UID_DONO_DO_FIREBASE';

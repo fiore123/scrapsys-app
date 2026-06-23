@@ -14,6 +14,64 @@ const dbPath = join(app.getPath('userData'), 'scrapsys_database.json')
 const syncMetaPath = join(app.getPath('userData'), 'scrapsys_sync_meta.json')
 const syncConfigPath = join(app.getPath('userData'), 'scrapsys_sync_config.json')
 const syncPort = 38947
+const syncCodeBytes = 9
+const maxSyncBodyBytes = 2 * 1024 * 1024
+const maxSyncKeys = 250
+const syncRateWindowMs = 60 * 1000
+const syncRateLimit = 30
+const syncAttempts = new Map()
+
+function isPrivateAddress(address = '') {
+  const normalized = address.replace(/^::ffff:/, '')
+  return (
+    normalized === '127.0.0.1' ||
+    normalized === '::1' ||
+    normalized.startsWith('10.') ||
+    normalized.startsWith('192.168.') ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(normalized)
+  )
+}
+
+function generatePairingCode() {
+  return crypto.randomBytes(syncCodeBytes).toString('base64url').toUpperCase()
+}
+
+function safeCompare(a = '', b = '') {
+  const left = Buffer.from(String(a))
+  const right = Buffer.from(String(b))
+  return left.length === right.length && crypto.timingSafeEqual(left, right)
+}
+
+function checkSyncRate(address) {
+  const now = Date.now()
+  const entry = syncAttempts.get(address) || { count: 0, resetAt: now + syncRateWindowMs }
+  if (entry.resetAt <= now) {
+    entry.count = 0
+    entry.resetAt = now + syncRateWindowMs
+  }
+  entry.count += 1
+  syncAttempts.set(address, entry)
+  return entry.count <= syncRateLimit
+}
+
+function isSafeBusinessKey(key) {
+  return (
+    typeof key === 'string' &&
+    key.length > 0 &&
+    key.length <= 96 &&
+    !key.startsWith('__scrapsys_') &&
+    /^[a-zA-Z0-9_-]+$/.test(key)
+  )
+}
+
+function sanitizeDatabase(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return {}
+  return Object.fromEntries(
+    Object.entries(data)
+      .filter(([key]) => isSafeBusinessKey(key))
+      .slice(0, maxSyncKeys)
+  )
+}
 
 function loadJsonFile(filePath, fallback = {}) {
   try {
@@ -41,9 +99,9 @@ function touchSyncKey(key) {
 
 function getSyncConfig() {
   const saved = loadJsonFile(syncConfigPath, null)
-  if (saved?.pairingCode) return saved
+  if (saved?.pairingCode && String(saved.pairingCode).length >= 12) return saved
 
-  const config = { pairingCode: crypto.randomInt(100000, 999999).toString() }
+  const config = { pairingCode: generatePairingCode(), createdAt: new Date().toISOString() }
   saveJsonFile(syncConfigPath, config)
   return config
 }
@@ -70,6 +128,7 @@ function loadDatabase() {
 
 function saveToDatabase(key, data) {
   try {
+    if (!isSafeBusinessKey(key)) return false
     const db = loadDatabase()
     db[key] = data
 
@@ -86,11 +145,24 @@ function saveToDatabase(key, data) {
 
 function startSyncServer() {
   const server = http.createServer((request, response) => {
-    response.setHeader('Access-Control-Allow-Origin', '*')
+    const remoteAddress = request.socket.remoteAddress || ''
+    const origin = request.headers.origin || ''
+    const allowedOrigin =
+      origin === 'capacitor://localhost' ||
+      origin === 'http://localhost' ||
+      /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+
+    response.setHeader('Access-Control-Allow-Origin', allowedOrigin ? origin : 'null')
     response.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-ScrapSys-Code')
     response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
     response.setHeader('Access-Control-Allow-Private-Network', 'true')
     response.setHeader('Content-Type', 'application/json; charset=utf-8')
+
+    if (!isPrivateAddress(remoteAddress) || !checkSyncRate(remoteAddress)) {
+      response.writeHead(429)
+      response.end(JSON.stringify({ ok: false, message: 'Muitas tentativas de sincronizacao.' }))
+      return
+    }
 
     if (request.method === 'OPTIONS') {
       response.writeHead(204)
@@ -98,7 +170,8 @@ function startSyncServer() {
       return
     }
 
-    if (request.headers['x-scrapsys-code'] !== getSyncConfig().pairingCode) {
+    const requestCode = String(request.headers['x-scrapsys-code'] || '')
+    if (!safeCompare(requestCode, getSyncConfig().pairingCode)) {
       response.writeHead(401)
       response.end(JSON.stringify({ ok: false, message: 'Codigo de pareamento invalido.' }))
       return
@@ -115,22 +188,27 @@ function startSyncServer() {
       return
     }
 
+    if (!String(request.headers['content-type'] || '').includes('application/json')) {
+      response.writeHead(415)
+      response.end(JSON.stringify({ ok: false, message: 'Formato invalido.' }))
+      return
+    }
+
     let body = ''
     request.on('data', (chunk) => {
       body += chunk
-      if (body.length > 5 * 1024 * 1024) request.destroy()
+      if (body.length > maxSyncBodyBytes) request.destroy()
     })
     request.on('end', () => {
       try {
         const incoming = JSON.parse(body || '{}')
-        const incomingData = incoming.data && typeof incoming.data === 'object' ? incoming.data : {}
+        const incomingData = sanitizeDatabase(incoming.data)
         const incomingMeta = incoming.meta && typeof incoming.meta === 'object' ? incoming.meta : {}
-        const database = loadDatabase()
+        const database = sanitizeDatabase(loadDatabase())
         const meta = loadSyncMeta()
         let changedByRemote = false
 
         Object.entries(incomingData).forEach(([key, value]) => {
-          if (key.startsWith('__scrapsys_')) return
           const incomingTimestamp = Number(incomingMeta[key] || 0)
           const serverTimestamp = Number(meta[key] || 0)
           if (incomingTimestamp > serverTimestamp) {
@@ -164,16 +242,17 @@ function startSyncServer() {
 function replaceDatabase(data, updateSyncMeta = true) {
   try {
     if (!data || typeof data !== 'object' || Array.isArray(data)) return false
+    const safeData = sanitizeDatabase(data)
 
     fs.mkdirSync(app.getPath('userData'), { recursive: true })
     const temporaryPath = `${dbPath}.tmp`
-    fs.writeFileSync(temporaryPath, JSON.stringify(data, null, 2), 'utf8')
+    fs.writeFileSync(temporaryPath, JSON.stringify(safeData, null, 2), 'utf8')
     fs.renameSync(temporaryPath, dbPath)
     if (updateSyncMeta) {
       const timestamp = Date.now()
       saveJsonFile(
         syncMetaPath,
-        Object.fromEntries(Object.keys(data).map((key) => [key, timestamp]))
+        Object.fromEntries(Object.keys(safeData).map((key) => [key, timestamp]))
       )
     }
     return true
@@ -196,6 +275,9 @@ function createWindow() {
       devTools: false,
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
       preload: join(__dirname, '../preload/index.js')
     }
   })
@@ -215,8 +297,21 @@ function createWindow() {
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    try {
+      const url = new URL(details.url)
+      if (['https:', 'mailto:'].includes(url.protocol)) {
+        shell.openExternal(details.url)
+      }
+    } catch {
+      // Bloqueia URLs malformadas ou protocolos inesperados.
+    }
     return { action: 'deny' }
+  })
+
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (!is.dev || url !== process.env['ELECTRON_RENDERER_URL']) {
+      event.preventDefault()
+    }
   })
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
@@ -236,6 +331,9 @@ app.whenReady().then(() => {
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
+    window.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => {
+      callback(false)
+    })
   })
 
   ipcMain.on('ping', () => console.log('pong'))
