@@ -7,10 +7,11 @@ import { Preferences } from '@capacitor/preferences'
 import { Share } from '@capacitor/share'
 import {
   clearFirebaseSession,
-  ensureAnonymousFirebaseUser,
+  ensureFirebaseOwnerSession,
   getWorkspaceDocument,
   readFirebaseSession,
-  saveWorkspaceDocument
+  saveWorkspaceDocument,
+  signInFirebaseOwner
 } from './firebase'
 
 export const isNativeMobile = Capacitor.isNativePlatform()
@@ -132,16 +133,27 @@ export async function getCloudSyncUser() {
   return user
     ? {
         uid: user.uid,
-        anonymous: user.anonymous
+        email: user.email,
+        provider: user.provider
       }
     : null
 }
 
 export async function ensureCloudSyncReady() {
-  const user = await ensureAnonymousFirebaseUser()
+  const user = await ensureFirebaseOwnerSession()
   return {
     uid: user.uid,
-    anonymous: user.anonymous
+    email: user.email,
+    provider: user.provider
+  }
+}
+
+export async function connectCloudSync(email, password) {
+  const user = await signInFirebaseOwner(email, password)
+  return {
+    uid: user.uid,
+    email: user.email,
+    provider: user.provider
   }
 }
 

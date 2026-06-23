@@ -1,6 +1,9 @@
 node_modules
 .pnpm-store/
 .vscode/
+.env
+.env.local
+.env.*.local
 dist
 dist-mobile
 out

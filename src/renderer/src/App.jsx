@@ -12,6 +12,7 @@ import {
 import {
   getNativeAppVersion,
   getAutomaticSyncSettings,
+  connectCloudSync,
   disconnectCloudSync,
   ensureCloudSyncReady,
   exportBackup,
@@ -228,6 +229,8 @@ export default function App() {
   const [cloudSync, setCloudSync] = useState({ enabled: true });
   const [cloudSyncStatus, setCloudSyncStatus] = useState('idle');
   const [cloudSyncUser, setCloudSyncUser] = useState(null);
+  const [cloudSyncEmail, setCloudSyncEmail] = useState('');
+  const [cloudSyncPassword, setCloudSyncPassword] = useState('');
   const [cloudLastSync, setCloudLastSync] = useState(null);
   const syncReloadingRef = useRef(false);
 
@@ -283,7 +286,7 @@ export default function App() {
           const version = await window.electronAPI.getVersion();
           setAppVersion(version);
         } else {
-          setAppVersion(await getNativeAppVersion('1.2.10'));
+          setAppVersion(await getNativeAppVersion('1.2.11'));
         }
       } catch (error) {
         console.error('Erro ao obter versão:', error);
@@ -309,12 +312,18 @@ export default function App() {
 
     const loadCloudSync = async () => {
       try {
-        const user = await ensureCloudSyncReady();
+        const user = await getCloudSyncUser();
+        if (!user) {
+          if (active) setCloudSyncStatus('idle');
+          return;
+        }
         if (!active) return;
         setCloudSync({ enabled: true });
         setCloudSyncUser(user);
-        setCloudSyncStatus('connected');
+        setCloudSyncStatus('connecting');
         const result = await runCloudSync();
+        if (!active) return;
+        setCloudSyncStatus('connected');
         if (result.ok) setCloudLastSync(new Date());
         if (result.changed && !syncReloadingRef.current) {
           syncReloadingRef.current = true;
@@ -323,7 +332,10 @@ export default function App() {
         }
       } catch (error) {
         console.warn('Firebase indisponivel:', error);
-        if (active) setCloudSyncStatus('offline');
+        if (active) {
+          setCloudSyncUser(null);
+          setCloudSyncStatus('offline');
+        }
       }
     };
 
@@ -603,6 +615,27 @@ export default function App() {
     }
   };
 
+  const handleConnectCloudSync = async () => {
+    setIsSyncingData(true);
+    setCloudSyncStatus('connecting');
+    try {
+      const user = await connectCloudSync(cloudSyncEmail, cloudSyncPassword);
+      setCloudSyncUser(user);
+      setCloudSyncPassword('');
+      const result = await runCloudSync();
+      setCloudSyncStatus('connected');
+      setCloudLastSync(new Date());
+      showToast('Cofre seguro conectado e sincronizado.');
+      if (result.changed) setTimeout(() => window.location.reload(), 600);
+    } catch (error) {
+      console.error('Erro ao conectar sincronizacao segura:', error);
+      setCloudSyncStatus('offline');
+      showToast(error?.message || 'Nao foi possivel conectar ao Firebase.');
+    } finally {
+      setIsSyncingData(false);
+    }
+  };
+
   const handleDisconnectCloudSync = async () => {
     setIsSyncingData(true);
     try {
@@ -610,7 +643,8 @@ export default function App() {
       setCloudSync({ enabled: true });
       setCloudSyncUser(null);
       setCloudSyncStatus('idle');
-      showToast('Sessao da nuvem reiniciada. O app tentara reconectar automaticamente.');
+      setCloudSyncPassword('');
+      showToast('Sessao segura removida deste dispositivo.');
     } catch (error) {
       console.error('Erro ao sair do Firebase:', error);
       showToast('Nao foi possivel sair da nuvem.');
@@ -1987,8 +2021,8 @@ export default function App() {
                 <div className="rounded-2xl bg-emerald-500/5 border border-emerald-500/20 p-4 mb-5">
                   <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
                     <div>
-                      <p className="text-sm text-gray-200 font-bold">Banco de dados ScrapSys automatico</p>
-                      <p className="text-xs text-gray-500 mt-1 leading-relaxed">O app conecta sozinho ao Firebase, sincroniza logins, usuarios, cadastros, materiais, caixa e movimentacoes entre PC e Android.</p>
+                      <p className="text-sm text-gray-200 font-bold">Cofre seguro ScrapSys</p>
+                      <p className="text-xs text-gray-500 mt-1 leading-relaxed">A nuvem agora usa uma conta dona do Firebase. Isso evita sessoes anonimas ilimitadas e reduz risco de leitura, escrita ou abuso por usuarios externos.</p>
                     </div>
                     <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border w-fit ${cloudSyncStatus === 'connected' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : cloudSyncStatus === 'offline' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-white/5 text-gray-500 border-white/10'}`}>
                       {cloudSyncStatus === 'connected' ? 'Conectado' : cloudSyncStatus === 'connecting' ? 'Conectando' : cloudSyncStatus === 'offline' ? 'Offline' : 'Desativado'}
@@ -1996,25 +2030,38 @@ export default function App() {
                   </div>
 
                   <div className="mt-4 flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
-                    <div>
+                    <div className="flex-1">
                       <p className="text-xs text-gray-400">
                         Workspace: <span className="text-emerald-400 font-semibold">shared_workspace</span>
-                        {cloudSyncUser?.uid && <span className="text-gray-600"> / dispositivo {cloudSyncUser.uid.slice(0, 8)}</span>}
+                        {cloudSyncUser?.uid && <span className="text-gray-600"> / UID {cloudSyncUser.uid}</span>}
                       </p>
                       <p className="text-[10px] text-gray-600 mt-1 uppercase tracking-wider">
-                        {cloudLastSync ? `Ultima sincronizacao: ${cloudLastSync.toLocaleTimeString('pt-BR')}` : 'Sincronizacao inicia automaticamente ao abrir o app.'}
+                        {cloudSyncUser?.email ? `Conta conectada: ${cloudSyncUser.email}` : 'Conecte a conta dona uma vez neste dispositivo.'}
+                      </p>
+                      <p className="text-[10px] text-gray-600 mt-1 uppercase tracking-wider">
+                        {cloudLastSync ? `Ultima sincronizacao: ${cloudLastSync.toLocaleTimeString('pt-BR')}` : 'A sincronizacao automatica inicia apos conectar o cofre.'}
                       </p>
                     </div>
-                    <div className="flex gap-2">
-                      <button onClick={handleRunCloudSyncNow} disabled={isSyncingData} className="px-4 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-sm disabled:opacity-50">
-                        Sincronizar agora
-                      </button>
-                      <button onClick={handleDisconnectCloudSync} disabled={isSyncingData} className="px-4 py-3 bg-white/5 text-gray-400 border border-white/10 rounded-xl font-bold text-sm disabled:opacity-50">
-                        Reiniciar sessao
-                      </button>
-                    </div>
+                    {cloudSyncUser ? (
+                      <div className="flex gap-2">
+                        <button onClick={handleRunCloudSyncNow} disabled={isSyncingData} className="px-4 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-sm disabled:opacity-50">
+                          Sincronizar agora
+                        </button>
+                        <button onClick={handleDisconnectCloudSync} disabled={isSyncingData} className="px-4 py-3 bg-white/5 text-gray-400 border border-white/10 rounded-xl font-bold text-sm disabled:opacity-50">
+                          Sair da nuvem
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2 w-full sm:w-auto">
+                        <input type="email" value={cloudSyncEmail} onChange={(e) => setCloudSyncEmail(e.target.value)} placeholder="E-mail Firebase dono" className="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white outline-none focus:border-emerald-500/50 text-sm" />
+                        <input type="password" value={cloudSyncPassword} onChange={(e) => setCloudSyncPassword(e.target.value)} placeholder="Senha" className="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white outline-none focus:border-emerald-500/50 text-sm" />
+                        <button onClick={handleConnectCloudSync} disabled={isSyncingData || !cloudSyncEmail || !cloudSyncPassword} className="px-4 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-sm disabled:opacity-50">
+                          Conectar
+                        </button>
+                      </div>
+                    )}
                   </div>
-                  <p className="text-[10px] text-gray-600 mt-4 leading-relaxed">O login do ScrapSys agora e o login do banco. Quando o admin cria um usuario comum, ele ja fica disponivel no PC e no Android apos a sincronizacao.</p>
+                  <p className="text-[10px] text-gray-600 mt-4 leading-relaxed">Depois de conectado, o login interno do ScrapSys continua valendo normalmente. Quando o admin cria um usuario comum, ele fica disponivel no PC e no Android apos a sincronizacao segura.</p>
                 </div>
 
                 <p className="text-sm text-gray-300 font-semibold">Rede local gratuita como alternativa</p>

@@ -1,8 +1,8 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core'
 
 const firebaseConfig = {
-  apiKey: 'AIzaSyAOJ6UdMRcyjn8Tk-3aiS4QMm-Amzf6Tuo',
-  projectId: 'scrapsys'
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || '',
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'scrapsys'
 }
 
 const AUTH_SESSION_KEY = '__scrapsys_firebase_auth_session'
@@ -16,6 +16,12 @@ class FirebaseRestError extends Error {
     this.name = 'FirebaseRestError'
     this.status = status
     this.data = data
+  }
+}
+
+function assertFirebaseConfig() {
+  if (!firebaseConfig.apiKey || !firebaseConfig.projectId) {
+    throw new Error('Firebase nao configurado. Confira o arquivo .env.local.')
   }
 }
 
@@ -129,56 +135,77 @@ async function saveFirebaseSession(session) {
   localStorage.setItem(AUTH_SESSION_KEY, value)
 }
 
-export async function ensureAnonymousFirebaseUser() {
-  const saved = await readFirebaseSession()
-  if (saved?.idToken && saved.expiresAt && saved.expiresAt > Date.now() + 60000) {
-    return saved
-  }
-
-  if (saved?.refreshToken) {
-    try {
-      const refreshed = await requestJson(
-        `https://securetoken.googleapis.com/v1/token?key=${firebaseConfig.apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            grant_type: 'refresh_token',
-            refresh_token: saved.refreshToken
-          })
-        }
-      )
-      const session = {
-        uid: refreshed.user_id,
-        idToken: refreshed.id_token,
-        refreshToken: refreshed.refresh_token,
-        expiresAt: Date.now() + Number(refreshed.expires_in || 3600) * 1000,
-        anonymous: true
-      }
-      await saveFirebaseSession(session)
-      return session
-    } catch (error) {
-      console.warn('Nao foi possivel renovar sessao anonima do Firebase:', error)
-    }
-  }
-
-  const data = await requestJson(
-    `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${firebaseConfig.apiKey}`,
+async function refreshFirebaseSession(saved) {
+  assertFirebaseConfig()
+  const refreshed = await requestJson(
+    `https://securetoken.googleapis.com/v1/token?key=${firebaseConfig.apiKey}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ returnSecureToken: true })
+      body: JSON.stringify({
+        grant_type: 'refresh_token',
+        refresh_token: saved.refreshToken
+      })
     }
   )
   const session = {
-    uid: data.localId,
-    idToken: data.idToken,
-    refreshToken: data.refreshToken,
-    expiresAt: Date.now() + Number(data.expiresIn || 3600) * 1000,
-    anonymous: true
+    uid: refreshed.user_id,
+    email: saved.email || '',
+    idToken: refreshed.id_token,
+    refreshToken: refreshed.refresh_token,
+    expiresAt: Date.now() + Number(refreshed.expires_in || 3600) * 1000,
+    provider: 'password'
   }
   await saveFirebaseSession(session)
   return session
+}
+
+export async function signInFirebaseOwner(email, password) {
+  assertFirebaseConfig()
+  const safeEmail = String(email || '').trim().toLowerCase()
+  if (!safeEmail || !password) throw new Error('Informe e-mail e senha do dono da sincronizacao.')
+
+  const data = await requestJson(
+    `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${firebaseConfig.apiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: safeEmail,
+        password,
+        returnSecureToken: true
+      })
+    }
+  )
+
+  const session = {
+    uid: data.localId,
+    email: data.email || safeEmail,
+    idToken: data.idToken,
+    refreshToken: data.refreshToken,
+    expiresAt: Date.now() + Number(data.expiresIn || 3600) * 1000,
+    provider: 'password'
+  }
+  await saveFirebaseSession(session)
+  return session
+}
+
+export async function ensureFirebaseOwnerSession() {
+  const saved = await readFirebaseSession()
+  if (!saved?.idToken || !saved?.refreshToken) {
+    throw new Error('Configure a sincronizacao segura com e-mail e senha do Firebase.')
+  }
+
+  if (saved.expiresAt && saved.expiresAt > Date.now() + 60000) {
+    return saved
+  }
+
+  try {
+    return await refreshFirebaseSession(saved)
+  } catch (error) {
+    await clearFirebaseSession()
+    throw new Error('Sessao segura expirada. Conecte novamente a sincronizacao.')
+  }
 }
 
 export async function clearFirebaseSession() {
@@ -191,7 +218,7 @@ export async function clearFirebaseSession() {
 }
 
 export async function getWorkspaceDocument() {
-  const session = await ensureAnonymousFirebaseUser()
+  const session = await ensureFirebaseOwnerSession()
   try {
     const document = await requestJson(WORKSPACE_DOCUMENT_URL, {
       headers: { Authorization: `Bearer ${session.idToken}` }
@@ -209,7 +236,7 @@ export async function getWorkspaceDocument() {
 }
 
 export async function saveWorkspaceDocument(data) {
-  const session = await ensureAnonymousFirebaseUser()
+  const session = await ensureFirebaseOwnerSession()
   await requestJson(WORKSPACE_DOCUMENT_URL, {
     method: 'PATCH',
     headers: {
