@@ -283,7 +283,7 @@ export default function App() {
           const version = await window.electronAPI.getVersion();
           setAppVersion(version);
         } else {
-          setAppVersion(await getNativeAppVersion('1.2.8'));
+          setAppVersion(await getNativeAppVersion('1.2.9'));
         }
       } catch (error) {
         console.error('Erro ao obter versão:', error);

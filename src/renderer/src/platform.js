@@ -6,13 +6,11 @@ import { Haptics, ImpactStyle } from '@capacitor/haptics'
 import { Preferences } from '@capacitor/preferences'
 import { Share } from '@capacitor/share'
 import {
+  clearFirebaseSession,
   ensureAnonymousFirebaseUser,
-  getCloudSyncDocRef,
-  getCurrentFirebaseUser,
-  getDoc,
-  serverTimestamp,
-  setDoc,
-  signOutFirebaseUser
+  getWorkspaceDocument,
+  readFirebaseSession,
+  saveWorkspaceDocument
 } from './firebase'
 
 export const isNativeMobile = Capacitor.isNativePlatform()
@@ -130,12 +128,11 @@ export async function saveAutomaticSyncSettings(settings) {
 }
 
 export async function getCloudSyncUser() {
-  const user = await getCurrentFirebaseUser()
+  const user = await readFirebaseSession()
   return user
     ? {
         uid: user.uid,
-        email: user.email,
-        anonymous: user.isAnonymous
+        anonymous: user.anonymous
       }
     : null
 }
@@ -144,13 +141,12 @@ export async function ensureCloudSyncReady() {
   const user = await ensureAnonymousFirebaseUser()
   return {
     uid: user.uid,
-    email: user.email,
-    anonymous: user.isAnonymous
+    anonymous: user.anonymous
   }
 }
 
 export async function disconnectCloudSync() {
-  await signOutFirebaseUser()
+  await clearFirebaseSession()
 }
 
 export async function runAutomaticSync(settingsOverride) {
@@ -248,19 +244,18 @@ export async function runCloudSync() {
   await ensureCloudSyncReady()
 
   const deviceId = await getCloudDeviceId()
-  const [localData, localMeta, snapshot] = await Promise.all([
+  const [localData, localMeta, remote] = await Promise.all([
     readAllData(),
     readPrivateJson(CLOUD_SYNC_META_KEY, {}),
-    getDoc(getCloudSyncDocRef())
+    getWorkspaceDocument()
   ])
-  const remote = snapshot.exists() ? snapshot.data() : {}
-  const remoteData = remote.data && typeof remote.data === 'object' ? remote.data : {}
-  const remoteMeta = remote.meta && typeof remote.meta === 'object' ? remote.meta : {}
+  const remoteData = remote?.data && typeof remote.data === 'object' ? remote.data : {}
+  const remoteMeta = remote?.meta && typeof remote.meta === 'object' ? remote.meta : {}
   const allKeys = new Set([...Object.keys(localData), ...Object.keys(remoteData)])
   const mergedData = {}
   const mergedMeta = {}
   let localChanged = false
-  let cloudChanged = !snapshot.exists()
+  let cloudChanged = !remote
 
   allKeys.forEach((key) => {
     if (key.startsWith('__scrapsys_')) return
@@ -291,10 +286,10 @@ export async function runCloudSync() {
   }
 
   if (cloudChanged) {
-    await setDoc(getCloudSyncDocRef(), {
+    await saveWorkspaceDocument({
       data: JSON.parse(JSON.stringify(mergedData)),
       meta: mergedMeta,
-      updatedAt: serverTimestamp(),
+      updatedAt: new Date().toISOString(),
       updatedBy: deviceId,
       schemaVersion: 1
     })
