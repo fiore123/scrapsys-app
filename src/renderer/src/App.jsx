@@ -12,10 +12,9 @@ import {
 import {
   getNativeAppVersion,
   getAutomaticSyncSettings,
-  connectCloudSync,
   disconnectCloudSync,
+  ensureCloudSyncReady,
   exportBackup,
-  getCloudSyncSettings,
   getCloudSyncUser,
   importBackup,
   isNativeMobile,
@@ -23,7 +22,6 @@ import {
   noteLocalDataChanged,
   runCloudSync,
   runAutomaticSync,
-  saveCloudSyncSettings,
   saveAutomaticSyncSettings,
   saveLocalData,
   tapFeedback
@@ -66,6 +64,54 @@ const INITIAL_USERS = [
     validUntil: '2099-12-31T23:59:59.000Z'
   }
 ];
+
+const textEncoder = new TextEncoder();
+
+const toHex = (buffer) =>
+  Array.from(new Uint8Array(buffer))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+
+const generateSalt = () =>
+  globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+const hashPassword = async (password, salt) => {
+  const digest = await globalThis.crypto.subtle.digest(
+    'SHA-256',
+    textEncoder.encode(`${salt}:${password}`)
+  );
+  return toHex(digest);
+};
+
+const createPasswordFields = async (password) => {
+  const passwordSalt = generateSalt();
+  return {
+    passwordSalt,
+    passwordHash: await hashPassword(password, passwordSalt)
+  };
+};
+
+const verifyUserPassword = async (user, password) => {
+  if (user.passwordHash && user.passwordSalt) {
+    return (await hashPassword(password, user.passwordSalt)) === user.passwordHash;
+  }
+  return user.password === password;
+};
+
+const removePlainPassword = (user) => {
+  const { password, ...safeUser } = user;
+  return safeUser;
+};
+
+const normalizeUsersForStorage = async (users) =>
+  Promise.all(
+    users.map(async (user) => {
+      if (user.password && !user.passwordHash) {
+        return removePlainPassword({ ...user, ...(await createPasswordFields(user.password)) });
+      }
+      return removePlainPassword(user);
+    })
+  );
 
 const INITIAL_PRINTERS = [
   { id: 'pr_1', name: 'Bematech Térmica 80mm', type: 'receipt', isDefault: true },
@@ -179,9 +225,7 @@ export default function App() {
   const [automaticSync, setAutomaticSync] = useState({ enabled: false, serverUrl: '', pairingCode: '' });
   const [syncServerInfo, setSyncServerInfo] = useState(null);
   const [automaticSyncStatus, setAutomaticSyncStatus] = useState('idle');
-  const [cloudSync, setCloudSync] = useState({ enabled: false, email: '' });
-  const [cloudSyncEmail, setCloudSyncEmail] = useState('');
-  const [cloudSyncPassword, setCloudSyncPassword] = useState('');
+  const [cloudSync, setCloudSync] = useState({ enabled: true });
   const [cloudSyncStatus, setCloudSyncStatus] = useState('idle');
   const [cloudSyncUser, setCloudSyncUser] = useState(null);
   const [cloudLastSync, setCloudLastSync] = useState(null);
@@ -212,14 +256,12 @@ export default function App() {
       const loadedUsers = await loadData('global_usersList', INITIAL_USERS);
       const safeUsers = Array.isArray(loadedUsers) ? loadedUsers : INITIAL_USERS;
       const hasAdmin = safeUsers.some(u => u.role === 'admin');
+      const usersWithAdmin = hasAdmin ? safeUsers : [INITIAL_USERS[0], ...safeUsers];
+      const normalizedUsers = await normalizeUsersForStorage(usersWithAdmin);
 
       if (!isMounted) return;
 
-      if (!hasAdmin) {
-        setUsersList([INITIAL_USERS[0], ...safeUsers]);
-      } else {
-        setUsersList(safeUsers);
-      }
+      setUsersList(normalizedUsers);
       setUsersLoaded(true);
     };
 
@@ -241,7 +283,7 @@ export default function App() {
           const version = await window.electronAPI.getVersion();
           setAppVersion(version);
         } else {
-          setAppVersion(await getNativeAppVersion('1.2.7'));
+          setAppVersion(await getNativeAppVersion('1.2.8'));
         }
       } catch (error) {
         console.error('Erro ao obter versão:', error);
@@ -266,12 +308,23 @@ export default function App() {
     let active = true;
 
     const loadCloudSync = async () => {
-      const [settings, user] = await Promise.all([getCloudSyncSettings(), getCloudSyncUser()]);
-      if (!active) return;
-      setCloudSync(settings);
-      setCloudSyncEmail(settings.email || user?.email || '');
-      setCloudSyncUser(user);
-      setCloudSyncStatus(settings.enabled && user ? 'connected' : 'idle');
+      try {
+        const user = await ensureCloudSyncReady();
+        if (!active) return;
+        setCloudSync({ enabled: true });
+        setCloudSyncUser(user);
+        setCloudSyncStatus('connected');
+        const result = await runCloudSync();
+        if (result.ok) setCloudLastSync(new Date());
+        if (result.changed && !syncReloadingRef.current) {
+          syncReloadingRef.current = true;
+          showToast('Dados recebidos da nuvem. Atualizando...');
+          setTimeout(() => window.location.reload(), 600);
+        }
+      } catch (error) {
+        console.warn('Firebase indisponivel:', error);
+        if (active) setCloudSyncStatus('offline');
+      }
     };
 
     loadCloudSync();
@@ -530,30 +583,21 @@ export default function App() {
     showToast('Sincronizacao automatica desativada.');
   };
 
-  const handleConnectCloudSync = async () => {
-    if (!cloudSyncEmail.trim() || cloudSyncPassword.length < 6) {
-      showToast('Informe e-mail e senha com pelo menos 6 caracteres.');
-      return;
-    }
-
+  const handleRunCloudSyncNow = async () => {
     setIsSyncingData(true);
     setCloudSyncStatus('connecting');
     try {
-      const user = await connectCloudSync(cloudSyncEmail, cloudSyncPassword);
-      const settings = await saveCloudSyncSettings({ enabled: true, email: user.email });
-      setCloudSync(settings);
+      const user = await ensureCloudSyncReady();
       setCloudSyncUser(user);
-      setCloudSyncEmail(user.email || cloudSyncEmail);
-      setCloudSyncPassword('');
       const result = await runCloudSync();
       setCloudSyncStatus('connected');
       setCloudLastSync(new Date());
-      showToast('Sincronizacao em nuvem ativada.');
+      showToast('Sincronizacao em nuvem atualizada.');
       if (result.changed) setTimeout(() => window.location.reload(), 600);
     } catch (error) {
       console.error('Erro na sincronizacao Firebase:', error);
       setCloudSyncStatus('offline');
-      showToast(error?.message || 'Nao foi possivel conectar ao Firebase.');
+      showToast(error?.message || 'Nao foi possivel sincronizar com a nuvem.');
     } finally {
       setIsSyncingData(false);
     }
@@ -563,11 +607,10 @@ export default function App() {
     setIsSyncingData(true);
     try {
       await disconnectCloudSync();
-      setCloudSync({ enabled: false, email: '' });
+      setCloudSync({ enabled: true });
       setCloudSyncUser(null);
-      setCloudSyncPassword('');
       setCloudSyncStatus('idle');
-      showToast('Sincronizacao em nuvem desativada neste aparelho.');
+      showToast('Sessao da nuvem reiniciada. O app tentara reconectar automaticamente.');
     } catch (error) {
       console.error('Erro ao sair do Firebase:', error);
       showToast('Nao foi possivel sair da nuvem.');
@@ -600,12 +643,16 @@ export default function App() {
     }
   };
 
-  const handleAuth = (e) => {
+  const handleAuth = async (e) => {
     e.preventDefault();
 
-    const foundUser = usersList.find(u => u.login === loginCpf && u.password === loginPass);
+    if (cloudSyncStatus !== 'connected') {
+      handleRunCloudSyncNow();
+    }
+
+    const foundUser = usersList.find(u => u.login === loginCpf);
     
-    if (foundUser) {
+    if (foundUser && await verifyUserPassword(foundUser, loginPass)) {
       if (!foundUser.isActive) {
         showToast("Este usuário foi desativado pelo administrador.");
         return;
@@ -616,7 +663,14 @@ export default function App() {
         return;
       }
 
-      setCurrentUser(foundUser);
+      let safeUser = foundUser;
+      if (!foundUser.passwordHash || foundUser.password) {
+        const passwordFields = await createPasswordFields(loginPass);
+        safeUser = removePlainPassword({ ...foundUser, ...passwordFields });
+        setUsersList(usersList.map(u => u.id === foundUser.id ? safeUser : u));
+      }
+
+      setCurrentUser(safeUser);
       setLoginCpf('');
       setLoginPass('');
       setActiveTab('home');
@@ -635,10 +689,10 @@ export default function App() {
     setScaleLocked(false);
   };
 
-  const handleChangePassword = (e) => {
+  const handleChangePassword = async (e) => {
     e.preventDefault();
 
-    if (currentPasswordInput !== currentUser.password) {
+    if (!await verifyUserPassword(currentUser, currentPasswordInput)) {
       showToast("Senha atual incorreta.");
       return;
     }
@@ -653,12 +707,14 @@ export default function App() {
       return;
     }
 
-    const updatedUsers = usersList.map(u => 
-      u.id === currentUser.id ? { ...u, password: newPasswordInput } : u
+    const passwordFields = await createPasswordFields(newPasswordInput);
+    const updatedCurrentUser = removePlainPassword({ ...currentUser, ...passwordFields });
+    const updatedUsers = usersList.map(u =>
+      u.id === currentUser.id ? updatedCurrentUser : u
     );
 
     setUsersList(updatedUsers);
-    setCurrentUser({ ...currentUser, password: newPasswordInput });
+    setCurrentUser(updatedCurrentUser);
     
     setCurrentPasswordInput('');
     setNewPasswordInput('');
@@ -833,7 +889,7 @@ export default function App() {
     return pass;
   };
 
-  const handleGenerateUser = (e) => {
+  const handleGenerateUser = async (e) => {
     e.preventDefault();
 
     if (!newUserCpf || !newUserName || !newUserEmail) return;
@@ -846,6 +902,7 @@ export default function App() {
     }
 
     const password = generateRandomPassword();
+    const passwordFields = await createPasswordFields(password);
     
     const newUser = {
       id: Math.random().toString(36).substr(2, 9),
@@ -853,7 +910,7 @@ export default function App() {
       name: newUserName,
       email: newUserEmail,
       login: loginNumber,
-      password,
+      ...passwordFields,
       role: 'user',
       isActive: true,
       validUntil: getInitialValidDate()
@@ -870,6 +927,7 @@ export default function App() {
     setNewUserCpf('');
     setNewUserName('');
     setNewUserEmail('');
+    setTimeout(() => runCloudSync().catch((error) => console.warn('Sync apos criar usuario:', error)), 300);
   };
 
   const copyToClipboard = (text) => {
@@ -897,10 +955,11 @@ export default function App() {
     showToast("Usuário removido do sistema.");
   };
 
-  const handleResetUserPassword = (user) => {
+  const handleResetUserPassword = async (user) => {
     const newPass = generateRandomPassword();
+    const passwordFields = await createPasswordFields(newPass);
 
-    setUsersList(usersList.map(u => u.id === user.id ? { ...u, password: newPass } : u));
+    setUsersList(usersList.map(u => u.id === user.id ? removePlainPassword({ ...u, ...passwordFields }) : u));
 
     setGeneratedCredentials({
       login: user.login,
@@ -1928,56 +1987,34 @@ export default function App() {
                 <div className="rounded-2xl bg-emerald-500/5 border border-emerald-500/20 p-4 mb-5">
                   <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
                     <div>
-                      <p className="text-sm text-gray-200 font-bold">Nuvem Firebase recomendada</p>
-                      <p className="text-xs text-gray-500 mt-1 leading-relaxed">Sincroniza logins, cadastros, materiais, caixa e movimentacoes entre PC e Android pela internet, sem depender do mesmo Wi-Fi.</p>
+                      <p className="text-sm text-gray-200 font-bold">Banco de dados ScrapSys automatico</p>
+                      <p className="text-xs text-gray-500 mt-1 leading-relaxed">O app conecta sozinho ao Firebase, sincroniza logins, usuarios, cadastros, materiais, caixa e movimentacoes entre PC e Android.</p>
                     </div>
                     <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border w-fit ${cloudSyncStatus === 'connected' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : cloudSyncStatus === 'offline' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-white/5 text-gray-500 border-white/10'}`}>
                       {cloudSyncStatus === 'connected' ? 'Conectado' : cloudSyncStatus === 'connecting' ? 'Conectando' : cloudSyncStatus === 'offline' ? 'Offline' : 'Desativado'}
                     </span>
                   </div>
 
-                  {cloudSync.enabled && cloudSyncUser ? (
-                    <div className="mt-4 flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
-                      <div>
-                        <p className="text-xs text-gray-400">Conta ativa: <span className="text-emerald-400 font-semibold">{cloudSyncUser.email}</span></p>
-                        <p className="text-[10px] text-gray-600 mt-1 uppercase tracking-wider">
-                          {cloudLastSync ? `Ultima sincronizacao: ${cloudLastSync.toLocaleTimeString('pt-BR')}` : 'Aguardando primeira sincronizacao.'}
-                        </p>
-                      </div>
-                      <button
-                        onClick={handleDisconnectCloudSync}
-                        disabled={isSyncingData}
-                        className="px-4 py-3 bg-red-500/10 text-red-400 border border-red-500/20 rounded-xl font-bold text-sm disabled:opacity-50"
-                      >
-                        Desativar neste aparelho
+                  <div className="mt-4 flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-xs text-gray-400">
+                        Workspace: <span className="text-emerald-400 font-semibold">shared_workspace</span>
+                        {cloudSyncUser?.uid && <span className="text-gray-600"> / dispositivo {cloudSyncUser.uid.slice(0, 8)}</span>}
+                      </p>
+                      <p className="text-[10px] text-gray-600 mt-1 uppercase tracking-wider">
+                        {cloudLastSync ? `Ultima sincronizacao: ${cloudLastSync.toLocaleTimeString('pt-BR')}` : 'Sincronizacao inicia automaticamente ao abrir o app.'}
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={handleRunCloudSyncNow} disabled={isSyncingData} className="px-4 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-sm disabled:opacity-50">
+                        Sincronizar agora
+                      </button>
+                      <button onClick={handleDisconnectCloudSync} disabled={isSyncingData} className="px-4 py-3 bg-white/5 text-gray-400 border border-white/10 rounded-xl font-bold text-sm disabled:opacity-50">
+                        Reiniciar sessao
                       </button>
                     </div>
-                  ) : (
-                    <div className="mt-4 grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-3">
-                      <input
-                        type="email"
-                        value={cloudSyncEmail}
-                        onChange={(event) => setCloudSyncEmail(event.target.value)}
-                        placeholder="E-mail da conta de sincronizacao"
-                        className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white outline-none focus:border-emerald-500/50"
-                      />
-                      <input
-                        type="password"
-                        value={cloudSyncPassword}
-                        onChange={(event) => setCloudSyncPassword(event.target.value)}
-                        placeholder="Senha da nuvem"
-                        className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white outline-none focus:border-emerald-500/50"
-                      />
-                      <button
-                        onClick={handleConnectCloudSync}
-                        disabled={isSyncingData}
-                        className="px-5 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-sm disabled:opacity-50 whitespace-nowrap"
-                      >
-                        Entrar / Criar
-                      </button>
-                    </div>
-                  )}
-                  <p className="text-[10px] text-gray-600 mt-4 leading-relaxed">Use o mesmo e-mail e senha no PC e no celular. A primeira conexao pode criar a conta automaticamente se o Firebase Authentication estiver habilitado.</p>
+                  </div>
+                  <p className="text-[10px] text-gray-600 mt-4 leading-relaxed">O login do ScrapSys agora e o login do banco. Quando o admin cria um usuario comum, ele ja fica disponivel no PC e no Android apos a sincronizacao.</p>
                 </div>
 
                 <p className="text-sm text-gray-300 font-semibold">Rede local gratuita como alternativa</p>

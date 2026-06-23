@@ -1,9 +1,8 @@
 import { initializeApp } from 'firebase/app'
 import {
-  createUserWithEmailAndPassword,
   getAuth,
   onAuthStateChanged,
-  signInWithEmailAndPassword,
+  signInAnonymously,
   signOut
 } from 'firebase/auth'
 import { doc, getDoc, getFirestore, serverTimestamp, setDoc } from 'firebase/firestore'
@@ -40,20 +39,16 @@ export async function getCurrentFirebaseUser() {
   })
 }
 
-export async function signInOrCreateFirebaseUser(email, password) {
-  try {
-    return await signInWithEmailAndPassword(firebaseAuth, email, password)
-  } catch (error) {
-    if (!['auth/user-not-found', 'auth/invalid-credential'].includes(error?.code)) {
-      throw error
-    }
+export async function ensureAnonymousFirebaseUser() {
+  const user = await getCurrentFirebaseUser()
+  if (user) return user
 
-    return createUserWithEmailAndPassword(firebaseAuth, email, password)
-  }
+  const credential = await signInAnonymously(firebaseAuth)
+  return credential.user
 }
 
-export function getCloudSyncDocRef(uid) {
-  return doc(firebaseDb, 'scrapsysSync', uid)
+export function getCloudSyncDocRef() {
+  return doc(firebaseDb, 'scrapsysSync', 'shared_workspace')
 }
 
 export async function signOutFirebaseUser() {

@@ -6,12 +6,12 @@ import { Haptics, ImpactStyle } from '@capacitor/haptics'
 import { Preferences } from '@capacitor/preferences'
 import { Share } from '@capacitor/share'
 import {
+  ensureAnonymousFirebaseUser,
   getCloudSyncDocRef,
   getCurrentFirebaseUser,
   getDoc,
   serverTimestamp,
   setDoc,
-  signInOrCreateFirebaseUser,
   signOutFirebaseUser
 } from './firebase'
 
@@ -19,7 +19,6 @@ export const isNativeMobile = Capacitor.isNativePlatform()
 
 const SYNC_SETTINGS_KEY = '__scrapsys_sync_settings'
 const SYNC_META_KEY = '__scrapsys_sync_meta'
-const CLOUD_SYNC_SETTINGS_KEY = '__scrapsys_cloud_sync_settings'
 const CLOUD_SYNC_META_KEY = '__scrapsys_cloud_sync_meta'
 const CLOUD_DEVICE_KEY = '__scrapsys_cloud_device'
 
@@ -130,46 +129,27 @@ export async function saveAutomaticSyncSettings(settings) {
   await Preferences.set({ key: SYNC_SETTINGS_KEY, value: JSON.stringify(normalized) })
 }
 
-export async function getCloudSyncSettings() {
-  return readPrivateJson(CLOUD_SYNC_SETTINGS_KEY, {
-    enabled: false,
-    email: ''
-  })
-}
-
-export async function saveCloudSyncSettings(settings) {
-  const normalized = {
-    enabled: Boolean(settings.enabled),
-    email: String(settings.email || '').trim().toLowerCase()
-  }
-  await writePrivateJson(CLOUD_SYNC_SETTINGS_KEY, normalized)
-  return normalized
-}
-
 export async function getCloudSyncUser() {
   const user = await getCurrentFirebaseUser()
   return user
     ? {
         uid: user.uid,
-        email: user.email
+        email: user.email,
+        anonymous: user.isAnonymous
       }
     : null
 }
 
-export async function connectCloudSync(email, password) {
-  const normalizedEmail = String(email || '').trim().toLowerCase()
-  if (!normalizedEmail || !password) throw new Error('Informe e-mail e senha do Firebase.')
-
-  const credential = await signInOrCreateFirebaseUser(normalizedEmail, password)
-  await saveCloudSyncSettings({ enabled: true, email: normalizedEmail })
+export async function ensureCloudSyncReady() {
+  const user = await ensureAnonymousFirebaseUser()
   return {
-    uid: credential.user.uid,
-    email: credential.user.email
+    uid: user.uid,
+    email: user.email,
+    anonymous: user.isAnonymous
   }
 }
 
 export async function disconnectCloudSync() {
-  await saveCloudSyncSettings({ enabled: false, email: '' })
   await signOutFirebaseUser()
 }
 
@@ -265,17 +245,13 @@ async function writeAllData(data, meta) {
 }
 
 export async function runCloudSync() {
-  const settings = await getCloudSyncSettings()
-  if (!settings.enabled) return { ok: false, changed: false, message: 'Nuvem desativada.' }
-
-  const user = await getCurrentFirebaseUser()
-  if (!user) return { ok: false, changed: false, message: 'Conta Firebase desconectada.' }
+  await ensureCloudSyncReady()
 
   const deviceId = await getCloudDeviceId()
   const [localData, localMeta, snapshot] = await Promise.all([
     readAllData(),
     readPrivateJson(CLOUD_SYNC_META_KEY, {}),
-    getDoc(getCloudSyncDocRef(user.uid))
+    getDoc(getCloudSyncDocRef())
   ])
   const remote = snapshot.exists() ? snapshot.data() : {}
   const remoteData = remote.data && typeof remote.data === 'object' ? remote.data : {}
@@ -315,7 +291,7 @@ export async function runCloudSync() {
   }
 
   if (cloudChanged) {
-    await setDoc(getCloudSyncDocRef(user.uid), {
+    await setDoc(getCloudSyncDocRef(), {
       data: JSON.parse(JSON.stringify(mergedData)),
       meta: mergedMeta,
       updatedAt: serverTimestamp(),
