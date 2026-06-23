@@ -6,7 +6,7 @@ import {
   Home, PieChart, PackagePlus, Tag, QrCode,
   ChevronRight, ChevronDown, Usb, Wifi, MonitorSmartphone, Server,
   FileText, Users, UserPlus, Shield, Copy, Mail, Key, Power, PowerOff, X,
-  LogOut, CalendarClock, RefreshCw, Download, Info,
+  LogOut, CalendarClock, RefreshCw, Download, Info, MoreHorizontal,
   Truck, MessageCircle, Upload, Database
 } from 'lucide-react';
 import {
@@ -195,10 +195,10 @@ export default function App() {
 
   const [scraps, setScraps] = useState(INITIAL_SCRAPS);
   const [transactions, setTransactions] = useState([]);
-  const [initialCash, setInitialCash] = useState(5000);
+  const [initialCash, setInitialCash] = useState(0);
 
   const [isEditingCash, setIsEditingCash] = useState(false);
-  const [tempCash, setTempCash] = useState(5000);
+  const [tempCash, setTempCash] = useState(0);
   const [isCashModalOpen, setIsCashModalOpen] = useState(false);
   const [cashAdjustmentValue, setCashAdjustmentValue] = useState('');
   
@@ -278,6 +278,9 @@ export default function App() {
   const [isInventoryListOpen, setIsInventoryListOpen] = useState(false);
   const [receiptTx, setReceiptTx] = useState(null);
   const [labelPreview, setLabelPreview] = useState(null);
+  const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
+  const [isScrapFormOpen, setIsScrapFormOpen] = useState(false);
+  const [isSupplierFormOpen, setIsSupplierFormOpen] = useState(false);
 
   // === NOVO: ESTADOS DOS FORNECEDORES ===
   const [suppliers, setSuppliers] = useState([]);
@@ -459,7 +462,7 @@ export default function App() {
 
       const loadedScraps = await loadData(`${userKey}_scraps`, INITIAL_SCRAPS);
       const loadedTransactions = await loadData(`${userKey}_transactions`, []);
-      const loadedInitialCash = await loadData(`${userKey}_initialCash`, 5000);
+      const loadedInitialCash = await loadData(`${userKey}_initialCash`, 0);
       const loadedScales = await loadData(`${userKey}_scales`, INITIAL_SCALE);
       const loadedPrinters = await loadData(`${userKey}_printers`, INITIAL_PRINTERS);
       const loadedSuppliers = await loadData(`${userKey}_suppliers`, []); // Carrega os fornecedores
@@ -468,8 +471,8 @@ export default function App() {
 
       setScraps(Array.isArray(loadedScraps) ? loadedScraps : INITIAL_SCRAPS);
       setTransactions(Array.isArray(loadedTransactions) ? loadedTransactions : []);
-      setInitialCash(typeof loadedInitialCash === 'number' ? loadedInitialCash : 5000);
-      setTempCash(typeof loadedInitialCash === 'number' ? loadedInitialCash : 5000);
+      setInitialCash(typeof loadedInitialCash === 'number' ? loadedInitialCash : 0);
+      setTempCash(typeof loadedInitialCash === 'number' ? loadedInitialCash : 0);
       setScales(Array.isArray(loadedScales) ? loadedScales : INITIAL_SCALE);
       setPrinters(Array.isArray(loadedPrinters) ? loadedPrinters : INITIAL_PRINTERS);
       setSuppliers(Array.isArray(loadedSuppliers) ? loadedSuppliers : []);
@@ -754,6 +757,7 @@ export default function App() {
   const handleLogout = () => {
     setCurrentUser(null);
     setActiveTab('home');
+    setIsMoreMenuOpen(false);
     setCurrentItems([]);
     setWeight('');
     setCode('');
@@ -935,6 +939,7 @@ export default function App() {
     setNewSupplierPhone('');
     setNewSupplierScrapCode('');
     setNewSupplierTargetKg('');
+    setIsSupplierFormOpen(false);
     showToast("Fornecedor registado com sucesso.");
   };
 
@@ -1278,6 +1283,7 @@ export default function App() {
 
     setNewScrapName('');
     setNewScrapPrice('');
+    setIsScrapFormOpen(false);
     showToast("Material cadastrado com sucesso.");
   };
 
@@ -1370,6 +1376,194 @@ export default function App() {
     (u.cpf || '').includes(userSearchTerm)
   );
 
+  const tabContent = {
+    home: {
+      title: 'Pesagem rapida',
+      description: 'Registre compras com foco no fluxo do patio.',
+      icon: Scale
+    },
+    finance: {
+      title: 'Financeiro',
+      description: 'Acompanhe caixa, entradas e saidas do dia.',
+      icon: PieChart
+    },
+    register: {
+      title: 'Materiais',
+      description: 'Atualize tipos de sucata, codigos e precos.',
+      icon: PackagePlus
+    },
+    suppliers: {
+      title: 'Fornecedores',
+      description: 'Organize compradores, contatos e metas.',
+      icon: Truck
+    },
+    settings: {
+      title: 'Configuracoes',
+      description: 'Controle conexoes, backup, nuvem e dispositivos.',
+      icon: Settings
+    },
+    users: {
+      title: 'Usuarios',
+      description: 'Gerencie acessos e validade das contas.',
+      icon: Shield
+    },
+    faq: {
+      title: 'Ajuda',
+      description: 'Consulte orientacoes rapidas para operar melhor.',
+      icon: Info
+    }
+  };
+  const activeTabInfo = tabContent[activeTab] || tabContent.home;
+  const ActiveTabIcon = activeTabInfo.icon;
+  const cloudStatusLabel = cloudSyncStatus === 'connected'
+    ? 'Nuvem ativa'
+    : cloudSyncStatus === 'connecting'
+      ? 'Conectando'
+      : cloudSyncStatus === 'offline'
+        ? 'Nuvem offline'
+        : 'Nuvem pausada';
+  const cloudStatusClass = cloudSyncStatus === 'connected'
+    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+    : cloudSyncStatus === 'offline'
+      ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+      : 'bg-white/5 text-gray-400 border-white/10';
+
+  const renderNavButton = (tab, label, Icon, tone = 'emerald') => {
+    const isActive = activeTab === tab;
+    const activeClass = tone === 'indigo'
+      ? 'bg-zinc-800 text-indigo-400 shadow-md border border-white/10'
+      : 'bg-zinc-800 text-emerald-400 shadow-md border border-white/10';
+    const inactiveClass = tone === 'indigo'
+      ? 'text-indigo-500/60 hover:text-indigo-400 hover:bg-white/5 border border-transparent'
+      : 'text-gray-500 hover:text-gray-300 hover:bg-white/5 border border-transparent';
+
+    return (
+      <button
+        onClick={() => {
+          setActiveTab(tab);
+          setIsMoreMenuOpen(false);
+        }}
+        title={label}
+        className={`min-w-[4rem] md:min-w-0 px-2 py-2.5 md:p-3 shrink-0 rounded-xl md:rounded-lg transition-all flex flex-col md:flex-row items-center justify-center gap-1 ${isActive ? activeClass : inactiveClass}`}
+      >
+        <Icon size={21} />
+        <span className="text-[10px] font-black leading-none md:hidden">{label}</span>
+      </button>
+    );
+  };
+
+  const EmptyState = ({ icon: Icon, title, description, actionLabel, onAction }) => (
+    <div className="min-h-[220px] flex flex-col items-center justify-center text-center rounded-3xl border border-dashed border-white/10 bg-black/20 px-6 py-10">
+      <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 text-gray-500 flex items-center justify-center mb-4">
+        <Icon size={26} />
+      </div>
+      <h3 className="text-base font-black text-gray-300">{title}</h3>
+      <p className="text-sm text-gray-500 mt-2 max-w-sm leading-relaxed">{description}</p>
+      {actionLabel && onAction && (
+        <button onClick={onAction} className="mt-5 px-5 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold transition-all">
+          {actionLabel}
+        </button>
+      )}
+    </div>
+  );
+
+  const MobileSheet = ({ open, title, icon: Icon, onClose, children }) => {
+    if (!open) return null;
+
+    return (
+      <div className="fixed inset-0 z-[160] md:hidden">
+        <button aria-label="Fechar painel" className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
+        <div className="absolute left-0 right-0 bottom-0 max-h-[88vh] overflow-y-auto rounded-t-[2rem] border border-white/10 bg-[#121212] p-5 shadow-2xl animate-in slide-in-from-bottom-5">
+          <div className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-white/10" />
+          <div className="flex items-center justify-between gap-4 border-b border-white/5 pb-4 mb-5">
+            <h2 className="text-sm font-black uppercase tracking-widest text-gray-300 flex items-center gap-2">
+              <Icon size={16} className="text-emerald-500" /> {title}
+            </h2>
+            <button onClick={onClose} className="p-2 rounded-xl bg-white/5 text-gray-400 hover:text-white">
+              <X size={18} />
+            </button>
+          </div>
+          {children}
+        </div>
+      </div>
+    );
+  };
+
+  const renderScrapForm = () => (
+    <form onSubmit={handleRegisterScrap} className="flex flex-col gap-5">
+      <div>
+        <label className="text-xs font-semibold text-gray-500 mb-2 block">DESCRICAO DO MATERIAL</label>
+        <input type="text" value={newScrapName} onChange={(e) => setNewScrapName(e.target.value)} className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-gray-200 outline-none text-sm" required/>
+      </div>
+      <div>
+        <label className="text-xs font-semibold text-gray-500 mb-2 block">VALOR BASE (R$/KG)</label>
+        <div className="relative">
+          <span className="absolute left-4 top-[14px] text-gray-600 text-sm">R$</span>
+          <input type="number" step="0.01" value={newScrapPrice} onChange={(e) => setNewScrapPrice(e.target.value)} className="w-full bg-black/50 border border-white/10 rounded-xl pl-10 pr-4 py-3 text-gray-200 outline-none text-sm" required/>
+        </div>
+      </div>
+      <button type="submit" className="w-full mt-2 py-3.5 bg-zinc-800 hover:bg-zinc-700 text-gray-200 rounded-xl font-bold text-sm shadow-lg transition-all border border-white/10">Salvar Cadastro</button>
+    </form>
+  );
+
+  const renderSupplierForm = () => (
+    <form onSubmit={handleAddSupplier} className="flex flex-col gap-5">
+      <div>
+        <label className="text-xs font-semibold text-gray-500 mb-2 block uppercase tracking-wider">Nome da Empresa</label>
+        <input type="text" value={newSupplierName} onChange={(e) => setNewSupplierName(e.target.value)} placeholder="Ex: Gerdau S.A." className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-gray-200 outline-none text-sm" required/>
+      </div>
+      <div>
+        <label className="text-xs font-semibold text-gray-500 mb-2 block uppercase tracking-wider">WhatsApp c/ DDD</label>
+        <input type="text" value={newSupplierPhone} onChange={(e) => setNewSupplierPhone(e.target.value)} placeholder="Ex: 11999999999" className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-gray-200 outline-none text-sm" required/>
+      </div>
+      <div>
+        <label className="text-xs font-semibold text-gray-500 mb-2 block uppercase tracking-wider">Material de Interesse</label>
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setIsScrapDropdownOpen(!isScrapDropdownOpen)}
+            className={`w-full bg-black/50 border ${isScrapDropdownOpen ? 'border-emerald-500/50' : 'border-white/10'} rounded-xl px-4 py-3 text-sm outline-none transition-all cursor-pointer flex justify-between items-center ${!newSupplierScrapCode ? 'text-gray-500' : 'text-gray-200'}`}
+          >
+            <span className="truncate">
+              {newSupplierScrapCode ? scraps.find(s => s.code === newSupplierScrapCode)?.name : 'Selecione um material...'}
+            </span>
+            <ChevronDown size={16} className={`transition-transform ${isScrapDropdownOpen ? 'rotate-180 text-emerald-500' : 'text-gray-500'}`} />
+          </button>
+
+          {isScrapDropdownOpen && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setIsScrapDropdownOpen(false)}></div>
+              <div className="absolute top-full left-0 mt-2 w-full max-h-60 overflow-y-auto custom-scrollbar bg-zinc-900/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl z-50 animate-in fade-in slide-in-from-top-2">
+                {scraps.map(s => (
+                  <button
+                    type="button"
+                    key={s.code}
+                    onClick={() => {
+                      setNewSupplierScrapCode(s.code);
+                      setIsScrapDropdownOpen(false);
+                    }}
+                    className={`w-full px-4 py-3 text-sm font-medium transition-colors cursor-pointer flex justify-between items-center ${newSupplierScrapCode === s.code ? 'bg-emerald-500/10 text-emerald-400' : 'text-gray-300 hover:bg-zinc-800/50'}`}
+                  >
+                    <span>{s.name}</span>
+                    <span className="text-[10px] text-gray-500 font-mono">#{s.code}</span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+      <div>
+        <label className="text-xs font-semibold text-gray-500 mb-2 block uppercase tracking-wider">Meta para Alerta (KG)</label>
+        <div className="relative">
+          <input type="number" step="0.1" value={newSupplierTargetKg} onChange={(e) => setNewSupplierTargetKg(e.target.value)} placeholder="Ex: 2000" className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-gray-200 outline-none text-sm" required/>
+          <span className="absolute right-4 top-[14px] text-gray-600 text-sm font-bold">KG</span>
+        </div>
+      </div>
+      <button type="submit" className="w-full mt-2 py-3.5 bg-zinc-800 hover:bg-zinc-700 text-gray-200 rounded-xl font-bold text-sm shadow-lg transition-all border border-white/10">Cadastrar Fornecedor</button>
+    </form>
+  );
+
   if (!currentUser) {
     return (
       <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center p-4 relative overflow-hidden">
@@ -1424,7 +1618,7 @@ export default function App() {
       )}
 
       {toast.visible && (
-        <div className="fixed bottom-6 right-6 z-[100] bg-zinc-800 text-white px-6 py-4 rounded-xl shadow-2xl border border-white/10 animate-in slide-in-from-bottom-5 fade-in flex items-center gap-3 font-medium text-sm">
+        <div className="fixed left-4 right-4 bottom-[calc(7rem+env(safe-area-inset-bottom,0px))] md:left-auto md:right-6 md:bottom-6 md:max-w-sm z-[100] bg-zinc-800 text-white px-6 py-4 rounded-xl shadow-2xl border border-white/10 animate-in slide-in-from-bottom-5 fade-in flex items-center justify-center md:justify-start gap-3 font-medium text-sm">
           <CheckCircle size={18} className="text-emerald-500" />
           {toast.message}
         </div>
@@ -1444,28 +1638,62 @@ export default function App() {
           </div>
         </div>
 
-        <div className="mobile-bottom-nav flex bg-black/90 md:bg-black/40 backdrop-blur-xl rounded-2xl md:rounded-xl p-1.5 md:p-1 border border-white/10 md:border-white/5 gap-1 overflow-x-auto custom-scrollbar">
-          <button onClick={() => setActiveTab('home')} title="Pesagem Rápida" className={`p-3 shrink-0 rounded-lg transition-all ${activeTab === 'home' ? 'bg-zinc-800 text-emerald-400 shadow-md border border-white/10' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}><Home size={22} /></button>
-          <button onClick={() => setActiveTab('finance')} title="Financeiro" className={`p-3 shrink-0 rounded-lg transition-all ${activeTab === 'finance' ? 'bg-zinc-800 text-emerald-400 shadow-md border border-white/10' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}><PieChart size={22} /></button>
-          <button onClick={() => setActiveTab('register')} title="Cadastro de Material" className={`p-3 shrink-0 rounded-lg transition-all ${activeTab === 'register' ? 'bg-zinc-800 text-emerald-400 shadow-md border border-white/10' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}><PackagePlus size={22} /></button>
-          
-          <button onClick={() => setActiveTab('suppliers')} title="Fornecedores (Compradores)" className={`p-3 shrink-0 rounded-lg transition-all ${activeTab === 'suppliers' ? 'bg-zinc-800 text-emerald-400 shadow-md border border-white/10' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}><Truck size={22} /></button>
+        <div className="mobile-bottom-nav flex bg-black/90 md:bg-black/40 backdrop-blur-xl rounded-3xl md:rounded-xl p-1.5 md:p-1 border border-white/10 md:border-white/5 gap-1 overflow-x-auto custom-scrollbar">
+          {renderNavButton('home', 'Pesar', Home)}
+          {renderNavButton('finance', 'Caixa', PieChart)}
+          {renderNavButton('register', 'Sucata', PackagePlus)}
+          {renderNavButton('suppliers', 'Fornec.', Truck)}
+          {renderNavButton('settings', 'Ajustes', Settings)}
 
-          <button onClick={() => setActiveTab('settings')} title="Configurações" className={`p-3 shrink-0 rounded-lg transition-all ${activeTab === 'settings' ? 'bg-zinc-800 text-emerald-400 shadow-md border border-white/10' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}><Settings size={22} /></button>
-          
-          {currentUser.role === 'admin' && (
-            <>
-              <div className="w-px h-8 bg-white/10 my-auto mx-1 shrink-0"></div>
-              <button onClick={() => setActiveTab('users')} title="Painel Admin" className={`p-3 shrink-0 rounded-lg transition-all ${activeTab === 'users' ? 'bg-zinc-800 text-indigo-400 shadow-md border border-white/10' : 'text-indigo-500/50 hover:text-indigo-400 hover:bg-white/5'}`}><Shield size={22} /></button>
-            </>
-          )}
-          
-          <div className="w-px h-8 bg-white/10 my-auto mx-1 shrink-0"></div>
-          <button onClick={() => setActiveTab('faq')} title="Central de Ajuda" className={`p-3 shrink-0 rounded-lg transition-all ${activeTab === 'faq' ? 'bg-zinc-800 text-emerald-400 shadow-md border border-white/10' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}><Info size={22} /></button>
-
-          <button onClick={handleLogout} title="Sair do Sistema" className="p-3 shrink-0 rounded-lg transition-all text-red-500/50 hover:text-red-400 hover:bg-white/5"><LogOut size={22} /></button>
+          <button onClick={() => setIsMoreMenuOpen(true)} title="Mais opcoes" className="min-w-[4rem] md:min-w-0 px-2 py-2.5 md:p-3 shrink-0 rounded-xl md:rounded-lg transition-all text-gray-500 hover:text-gray-300 hover:bg-white/5 border border-transparent flex flex-col md:flex-row items-center justify-center gap-1">
+            <MoreHorizontal size={21} />
+            <span className="text-[10px] font-black leading-none md:hidden">Mais</span>
+          </button>
         </div>
       </header>
+
+      <section className="max-w-6xl mx-auto w-full mb-6 z-10">
+        <div className="rounded-3xl border border-white/10 bg-[#121212]/70 backdrop-blur-xl p-4 md:p-5 shadow-xl flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+              <ActiveTabIcon size={21} />
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.25em] text-gray-500 font-bold">Area atual</p>
+              <h2 className="text-lg md:text-xl font-black text-white">{activeTabInfo.title}</h2>
+              <p className="text-xs text-gray-500 mt-1">{activeTabInfo.description}</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <span className={`px-3 py-2 rounded-xl border text-[10px] font-black uppercase tracking-widest ${cloudStatusClass}`}>{cloudStatusLabel}</span>
+            <span className="px-3 py-2 rounded-xl border border-white/10 bg-white/5 text-gray-400 text-[10px] font-black uppercase tracking-widest">v{appVersion}</span>
+          </div>
+        </div>
+      </section>
+
+      <MobileSheet open={isMoreMenuOpen} title="Mais opcoes" icon={MoreHorizontal} onClose={() => setIsMoreMenuOpen(false)}>
+        <div className="grid grid-cols-1 gap-3">
+          {currentUser.role === 'admin' && (
+            <button onClick={() => { setActiveTab('users'); setIsMoreMenuOpen(false); }} className="w-full p-4 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 flex items-center gap-3 font-bold">
+              <Shield size={20} /> Painel Admin
+            </button>
+          )}
+          <button onClick={() => { setActiveTab('faq'); setIsMoreMenuOpen(false); }} className="w-full p-4 rounded-2xl bg-white/5 border border-white/10 text-gray-300 flex items-center gap-3 font-bold">
+            <Info size={20} /> Central de Ajuda
+          </button>
+          <button onClick={handleLogout} className="w-full p-4 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-300 flex items-center gap-3 font-bold">
+            <LogOut size={20} /> Sair do Sistema
+          </button>
+        </div>
+      </MobileSheet>
+
+      <MobileSheet open={isScrapFormOpen} title="Nova sucata" icon={PackagePlus} onClose={() => setIsScrapFormOpen(false)}>
+        {renderScrapForm()}
+      </MobileSheet>
+
+      <MobileSheet open={isSupplierFormOpen} title="Novo fornecedor" icon={Truck} onClose={() => setIsSupplierFormOpen(false)}>
+        {renderSupplierForm()}
+      </MobileSheet>
 
       <main className="flex-1 w-full flex flex-col items-center z-10 pb-10">
         
@@ -1476,7 +1704,6 @@ export default function App() {
               
               <div className="flex-1 w-full flex flex-col gap-6">
                 <div className="bg-[#121212]/80 backdrop-blur-xl border border-white/10 rounded-[2rem] p-6 sm:p-8 shadow-2xl relative overflow-hidden transition-all">
-                  
                   <div className="mb-8 bg-black/50 rounded-3xl p-6 border border-white/5 relative text-center shadow-inner">
                     <div className="flex flex-col sm:flex-row justify-between items-center gap-4 mb-8">
                       
@@ -1711,7 +1938,13 @@ export default function App() {
                   </div>
                   <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
                     {transactions.length === 0 ? (
-                      <p className="text-sm text-gray-500 text-center mt-10">Nenhuma transação registada.</p>
+                      <EmptyState
+                        icon={History}
+                        title="Nenhuma compra ainda"
+                        description="Quando uma pesagem for finalizada, ela aparece aqui com valor, usuario e data."
+                        actionLabel="Ir para Pesagem"
+                        onAction={() => setActiveTab('home')}
+                      />
                     ) : (
                       <div className="space-y-3">
                         {transactions.map((tx) => {
@@ -1751,49 +1984,49 @@ export default function App() {
         {/* ABA CADASTRO DE MATERIAL */}
         {activeTab === 'register' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-6xl w-full">
-            <div className="bg-[#121212]/80 backdrop-blur-xl border border-white/5 rounded-[2rem] p-6 shadow-xl h-fit">
+            <div className="bg-[#121212]/80 backdrop-blur-xl border border-white/5 rounded-[2rem] p-6 shadow-xl h-fit hidden lg:block">
               <h2 className="text-sm font-bold mb-6 flex items-center gap-2 text-gray-300 uppercase tracking-widest border-b border-white/5 pb-4"><Plus size={16} className="text-emerald-500" /> Nova Sucata</h2>
-              <form onSubmit={handleRegisterScrap} className="flex flex-col gap-5">
-                <div>
-                  <label className="text-xs font-semibold text-gray-500 mb-2 block">DESCRIÇÃO DO MATERIAL</label>
-                  <input type="text" value={newScrapName} onChange={(e) => setNewScrapName(e.target.value)} className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-gray-200 outline-none text-sm" required/>
-                </div>
-                <div>
-                  <label className="text-xs font-semibold text-gray-500 mb-2 block">VALOR BASE (R$/KG)</label>
-                  <div className="relative">
-                    <span className="absolute left-4 top-[14px] text-gray-600 text-sm">R$</span>
-                    <input type="number" step="0.01" value={newScrapPrice} onChange={(e) => setNewScrapPrice(e.target.value)} className="w-full bg-black/50 border border-white/10 rounded-xl pl-10 pr-4 py-3 text-gray-200 outline-none text-sm" required/>
-                  </div>
-                </div>
-                <button type="submit" className="w-full mt-2 py-3.5 bg-zinc-800 hover:bg-zinc-700 text-gray-200 rounded-xl font-bold text-sm shadow-lg transition-all border border-white/10">Salvar Cadastro</button>
-              </form>
+              {renderScrapForm()}
             </div>
 
             <div className="lg:col-span-2 bg-[#121212]/80 backdrop-blur-xl border border-white/5 rounded-[2rem] p-6 flex flex-col h-[600px] shadow-xl">
               <div className="flex justify-between items-center mb-6 border-b border-white/5 pb-4">
                 <h2 className="text-sm font-bold flex items-center gap-2 text-gray-300 uppercase tracking-widest"><Tag className="text-emerald-500" size={16} /> Tabela de Preços e Códigos</h2>
+                <button onClick={() => setIsScrapFormOpen(true)} className="lg:hidden px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center gap-2">
+                  <Plus size={14} /> Nova
+                </button>
               </div>
               <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {scraps.map((s) => (
-                    <div key={s.code} className="bg-black/40 border border-white/5 rounded-2xl p-4 flex items-center justify-between group hover:bg-zinc-900/80">
-                      <div className="flex items-center gap-4">
-                        <div className="flex flex-col items-center justify-center bg-white/5 p-2 rounded-xl border border-white/5">
-                          <Barcode size={20} className="text-gray-500 mb-1" />
-                          <span className="text-[10px] font-mono font-bold text-gray-400">{s.code}</span>
+                {scraps.length === 0 ? (
+                  <EmptyState
+                    icon={PackagePlus}
+                    title="Nenhuma sucata cadastrada"
+                    description="Cadastre os tipos de material para liberar selecao rapida na pesagem."
+                    actionLabel="Cadastrar sucata"
+                    onAction={() => setIsScrapFormOpen(true)}
+                  />
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {scraps.map((s) => (
+                      <div key={s.code} className="bg-black/40 border border-white/5 rounded-2xl p-4 flex items-center justify-between group hover:bg-zinc-900/80">
+                        <div className="flex items-center gap-4">
+                          <div className="flex flex-col items-center justify-center bg-white/5 p-2 rounded-xl border border-white/5">
+                            <Barcode size={20} className="text-gray-500 mb-1" />
+                            <span className="text-[10px] font-mono font-bold text-gray-400">{s.code}</span>
+                          </div>
+                          <div>
+                            <p className="font-bold text-gray-200 text-sm">{s.name}</p>
+                            <p className="text-xs font-semibold text-emerald-500/80 mt-0.5">{formatCurrency(s.price)}/kg</p>
+                          </div>
                         </div>
-                        <div>
-                          <p className="font-bold text-gray-200 text-sm">{s.name}</p>
-                          <p className="text-xs font-semibold text-emerald-500/80 mt-0.5">{formatCurrency(s.price)}/kg</p>
+                        <div className="flex gap-1.5 opacity-0 group-hover:opacity-100 transition-all">
+                          <button onClick={() => handlePreviewLabel(s)} className="p-2 text-gray-500 hover:text-emerald-400 hover:bg-emerald-400/10 rounded-lg transition-all border border-transparent hover:border-emerald-400/20" title="Imprimir Etiqueta"><Printer size={16} /></button>
+                          <button onClick={() => handleDeleteScrap(s.code)} className="p-2 text-red-500/50 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all border border-transparent hover:border-red-500/20" title="Remover"><Trash2 size={16} /></button>
                         </div>
                       </div>
-                      <div className="flex gap-1.5 opacity-0 group-hover:opacity-100 transition-all">
-                        <button onClick={() => handlePreviewLabel(s)} className="p-2 text-gray-500 hover:text-emerald-400 hover:bg-emerald-400/10 rounded-lg transition-all border border-transparent hover:border-emerald-400/20" title="Imprimir Etiqueta"><Printer size={16} /></button>
-                        <button onClick={() => handleDeleteScrap(s.code)} className="p-2 text-red-500/50 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all border border-transparent hover:border-red-500/20" title="Remover"><Trash2 size={16} /></button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -1802,70 +2035,27 @@ export default function App() {
         {/* ABA FORNECEDORES */}
         {activeTab === 'suppliers' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-6xl w-full">
-            <div className="bg-[#121212]/80 backdrop-blur-xl border border-white/5 rounded-[2rem] p-6 shadow-xl h-fit">
+            <div className="bg-[#121212]/80 backdrop-blur-xl border border-white/5 rounded-[2rem] p-6 shadow-xl h-fit hidden lg:block">
               <h2 className="text-sm font-bold mb-6 flex items-center gap-2 text-gray-300 uppercase tracking-widest border-b border-white/5 pb-4"><Truck size={16} className="text-emerald-500" /> Novo Comprador</h2>
-              <form onSubmit={handleAddSupplier} className="flex flex-col gap-5">
-                <div>
-                  <label className="text-xs font-semibold text-gray-500 mb-2 block uppercase tracking-wider">Nome da Empresa</label>
-                  <input type="text" value={newSupplierName} onChange={(e) => setNewSupplierName(e.target.value)} placeholder="Ex: Gerdau S.A." className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-gray-200 outline-none text-sm" required/>
-                </div>
-                <div>
-                  <label className="text-xs font-semibold text-gray-500 mb-2 block uppercase tracking-wider">WhatsApp c/ DDD</label>
-                  <input type="text" value={newSupplierPhone} onChange={(e) => setNewSupplierPhone(e.target.value)} placeholder="Ex: 11999999999" className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-gray-200 outline-none text-sm" required/>
-                </div>
-                <div>
-                  <label className="text-xs font-semibold text-gray-500 mb-2 block uppercase tracking-wider">Material de Interesse</label>
-                  <div className="relative">
-                    <div 
-                      onClick={() => setIsScrapDropdownOpen(!isScrapDropdownOpen)}
-                      className={`w-full bg-black/50 border ${isScrapDropdownOpen ? 'border-emerald-500/50' : 'border-white/10'} rounded-xl px-4 py-3 text-sm outline-none transition-all cursor-pointer flex justify-between items-center ${!newSupplierScrapCode ? 'text-gray-500' : 'text-gray-200'}`}
-                    >
-                      <span className="truncate">
-                        {newSupplierScrapCode ? scraps.find(s => s.code === newSupplierScrapCode)?.name : 'Selecione um material...'}
-                      </span>
-                      <ChevronDown size={16} className={`transition-transform ${isScrapDropdownOpen ? 'rotate-180 text-emerald-500' : 'text-gray-500'}`} />
-                    </div>
-
-                    {isScrapDropdownOpen && (
-                      <>
-                        <div className="fixed inset-0 z-40" onClick={() => setIsScrapDropdownOpen(false)}></div>
-                        <div className="absolute top-full left-0 mt-2 w-full max-h-60 overflow-y-auto custom-scrollbar bg-zinc-900/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl z-50 animate-in fade-in slide-in-from-top-2">
-                          {scraps.map(s => (
-                            <div 
-                              key={s.code}
-                              onClick={() => {
-                                setNewSupplierScrapCode(s.code);
-                                setIsScrapDropdownOpen(false);
-                              }}
-                              className={`px-4 py-3 text-sm font-medium transition-colors cursor-pointer flex justify-between items-center ${newSupplierScrapCode === s.code ? 'bg-emerald-500/10 text-emerald-400' : 'text-gray-300 hover:bg-zinc-800/50'}`}
-                            >
-                              <span>{s.name}</span>
-                              <span className="text-[10px] text-gray-500 font-mono">#{s.code}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </div>
-                <div>
-                  <label className="text-xs font-semibold text-gray-500 mb-2 block uppercase tracking-wider">Meta para Alerta (KG)</label>
-                  <div className="relative">
-                    <input type="number" step="0.1" value={newSupplierTargetKg} onChange={(e) => setNewSupplierTargetKg(e.target.value)} placeholder="Ex: 2000" className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-gray-200 outline-none text-sm" required/>
-                    <span className="absolute right-4 top-[14px] text-gray-600 text-sm font-bold">KG</span>
-                  </div>
-                </div>
-                <button type="submit" className="w-full mt-2 py-3.5 bg-zinc-800 hover:bg-zinc-700 text-gray-200 rounded-xl font-bold text-sm shadow-lg transition-all border border-white/10">Cadastrar Fornecedor</button>
-              </form>
+              {renderSupplierForm()}
             </div>
 
             <div className="lg:col-span-2 bg-[#121212]/80 backdrop-blur-xl border border-white/5 rounded-[2rem] p-6 flex flex-col h-[600px] shadow-xl">
               <div className="flex justify-between items-center mb-6 border-b border-white/5 pb-4">
                 <h2 className="text-sm font-bold flex items-center gap-2 text-gray-300 uppercase tracking-widest"><MessageCircle className="text-emerald-500" size={16} /> Controlo de Metas e Alertas</h2>
+                <button onClick={() => setIsSupplierFormOpen(true)} className="lg:hidden px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center gap-2">
+                  <Plus size={14} /> Novo
+                </button>
               </div>
               <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
                 {suppliers.length === 0 ? (
-                  <p className="text-sm text-gray-500 text-center mt-10">Nenhum comprador cadastrado para gerar alertas.</p>
+                  <EmptyState
+                    icon={Truck}
+                    title="Nenhum fornecedor ainda"
+                    description="Cadastre compradores e metas para saber quando ja vale acionar coleta pelo WhatsApp."
+                    actionLabel="Cadastrar fornecedor"
+                    onAction={() => setIsSupplierFormOpen(true)}
+                  />
                 ) : (
                   <div className="grid grid-cols-1 gap-4">
                     {suppliers.map((s) => {
