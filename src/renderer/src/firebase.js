@@ -10,6 +10,15 @@ const WORKSPACE_DOCUMENT_URL = `https://firestore.googleapis.com/v1/projects/${f
 
 const isNativeMobile = Capacitor.isNativePlatform()
 
+class FirebaseRestError extends Error {
+  constructor(message, status, data) {
+    super(message)
+    this.name = 'FirebaseRestError'
+    this.status = status
+    this.data = data
+  }
+}
+
 function readBrowserJson(key, fallback) {
   const value = localStorage.getItem(key)
   if (!value) return fallback
@@ -30,17 +39,27 @@ async function requestJson(url, options = {}) {
       connectTimeout: 10000,
       readTimeout: 10000
     })
+    const data =
+      typeof response.data === 'string'
+        ? (() => {
+            try {
+              return JSON.parse(response.data)
+            } catch {
+              return { message: response.data }
+            }
+          })()
+        : response.data
     if (response.status < 200 || response.status >= 300) {
-      const message = response.data?.error?.message || response.data?.message || `HTTP ${response.status}`
-      throw new Error(message)
+      const message = data?.error?.message || data?.message || `HTTP ${response.status}`
+      throw new FirebaseRestError(message, response.status, data)
     }
-    return response.data
+    return data
   }
 
   const response = await fetch(url, options)
   const data = await response.json().catch(() => ({}))
   if (!response.ok) {
-    throw new Error(data?.error?.message || `HTTP ${response.status}`)
+    throw new FirebaseRestError(data?.error?.message || `HTTP ${response.status}`, response.status, data)
   }
   return data
 }
@@ -116,6 +135,33 @@ export async function ensureAnonymousFirebaseUser() {
     return saved
   }
 
+  if (saved?.refreshToken) {
+    try {
+      const refreshed = await requestJson(
+        `https://securetoken.googleapis.com/v1/token?key=${firebaseConfig.apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            grant_type: 'refresh_token',
+            refresh_token: saved.refreshToken
+          })
+        }
+      )
+      const session = {
+        uid: refreshed.user_id,
+        idToken: refreshed.id_token,
+        refreshToken: refreshed.refresh_token,
+        expiresAt: Date.now() + Number(refreshed.expires_in || 3600) * 1000,
+        anonymous: true
+      }
+      await saveFirebaseSession(session)
+      return session
+    } catch (error) {
+      console.warn('Nao foi possivel renovar sessao anonima do Firebase:', error)
+    }
+  }
+
   const data = await requestJson(
     `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${firebaseConfig.apiKey}`,
     {
@@ -154,7 +200,10 @@ export async function getWorkspaceDocument() {
       Object.entries(document.fields || {}).map(([key, value]) => [key, fromFirestoreValue(value)])
     )
   } catch (error) {
-    if (String(error?.message || '').includes('NOT_FOUND')) return null
+    if (error?.status === 404 || String(error?.message || '').includes('NOT_FOUND')) return null
+    if (String(error?.message || '').includes('Database') && String(error?.message || '').includes('not found')) {
+      throw new Error('Firestore ainda nao foi criado no projeto Firebase.')
+    }
     throw error
   }
 }
